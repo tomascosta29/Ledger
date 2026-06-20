@@ -29,6 +29,13 @@ type OverlayFilters struct {
 	GroupID            *int64
 	ParentOverlayID    *int64
 	RawTransactionID   *int64
+	PartnerName        *string
+	PartnerIBAN        *string
+	DescriptionLike    *string
+	AmountMinMinor     *int64
+	AmountMaxMinor     *int64
+	AmountSign         *string
+	BucketID           *int64
 }
 
 type OverlaySortField string

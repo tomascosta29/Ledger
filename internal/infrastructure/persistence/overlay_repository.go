@@ -133,6 +133,38 @@ func buildOverlayWhere(f ports.OverlayFilters) (string, []any) {
 		clauses = append(clauses, "raw_transaction_id = ?")
 		args = append(args, *f.RawTransactionID)
 	}
+	if f.PartnerName != nil {
+		clauses = append(clauses, "partner_name LIKE ?")
+		args = append(args, "%"+*f.PartnerName+"%")
+	}
+	if f.PartnerIBAN != nil {
+		clauses = append(clauses, "partner_iban = ?")
+		args = append(args, *f.PartnerIBAN)
+	}
+	if f.DescriptionLike != nil {
+		clauses = append(clauses, "description LIKE ?")
+		args = append(args, "%"+*f.DescriptionLike+"%")
+	}
+	if f.AmountMinMinor != nil {
+		clauses = append(clauses, "amount_minor >= ?")
+		args = append(args, *f.AmountMinMinor)
+	}
+	if f.AmountMaxMinor != nil {
+		clauses = append(clauses, "amount_minor <= ?")
+		args = append(args, *f.AmountMaxMinor)
+	}
+	if f.AmountSign != nil {
+		switch *f.AmountSign {
+		case "-":
+			clauses = append(clauses, "amount_minor < 0")
+		case "+":
+			clauses = append(clauses, "amount_minor > 0")
+		}
+	}
+	if f.BucketID != nil {
+		clauses = append(clauses, "bucket_id = ?")
+		args = append(args, *f.BucketID)
+	}
 	if len(clauses) == 0 {
 		return "", nil
 	}

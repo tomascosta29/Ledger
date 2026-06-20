@@ -92,16 +92,21 @@ decisions, see [docs/adr/](./docs/adr/).
 ### TUI shell
 - Bubble Tea + Bubbles + Lipgloss wired in. The `App` is the root model: it owns the current screen, the status bar, and the help overlay. Status bar shows DB path, current screen title, mode badge, and a transient status slot. `?` opens the help overlay; any key dismisses. `1..5` jumps between the five screens; `q` / `ctrl+c` quits. Manager is the only screen with any real content so far — it loads the latest 200 overlay rows and supports `j/k/g/G` navigation. Categorizer / Linker / Budget / Recipes are stubs that document what each screen will own and tell the operator to use the CLI in the meantime. Subsequent milestones fill them in.
 
+### Manager screen + filter DSL
+- The TUI Manager screen supports the v1 filter DSL: `desc:`, `partner:`, `iban:`, `min:`, `max:`, `sign:`, `category:`, `bucket:`, `id:`. Clauses are whitespace-separated and AND-combined. A bare number is `min:<n>`. Press `/` to enter the filter input, `esc` to clear, `enter` to apply.
+- Overlay repository extended with new filter fields: `PartnerName`, `PartnerIBAN`, `DescriptionLike`, `AmountMinMinor`, `AmountMaxMinor`, `AmountSign`, `BucketID`. SQL: `LIKE %...%` for substring match, exact for IBAN / category / id, `amount_minor >= / <= / < 0 / > 0` for the amount filters.
+- `j/k/g/G/pgup/pgdown` for navigation. The status line shows the current count after a filter apply.
+
 ---
 
 ## ⏳ Next (priority order)
 
-1. **Manager screen** — filter DSL (`desc:`, `partner:`, `iban:`, `min:`, `max:`, `sign:`), bulk select with `x`, command line for `cat/tag/hide/split`. ~1-2 days.
-2. **Categorizer screen** — unknown-transactions list, bulk categorize, rule-create from focused tx. ~1-2 days.
-3. **Budget screen** — uses the buckets data; live allocation vs spend, period selector. ~1-2 days.
-4. **Recipes screen** — list / author / pick active recipe. Plus CLI: `ledger recipe list|show|use`. ~1-2 days.
-5. **Rules engine + apply** — `rules` table, `RuleService.Apply()`, `ledger rule list|create|apply`. Categorizer screen ties in. ~3-4 days.
-6. **Transfer detection + Linker** — `TransferDetectionService`, `ledger transfers detect`, Linker TUI screen for manual linking. ~2-3 days.
+1. **Categorizer screen** — unknown-transactions list, bulk categorize, rule-create from focused tx. ~1-2 days.
+2. **Budget screen** — uses the buckets data; live allocation vs spend, period selector. ~1-2 days.
+3. **Recipes screen** — list / author / pick active recipe. Plus CLI: `ledger recipe list|show|use`. ~1-2 days.
+4. **Rules engine + apply** — `rules` table, `RuleService.Apply()`, `ledger rule list|create|apply`. Categorizer screen ties in. ~3-4 days.
+5. **Transfer detection + Linker** — `TransferDetectionService`, `ledger transfers detect`, Linker TUI screen for manual linking. ~2-3 days.
+6. **Manager bulk actions** — `x` to toggle select, `:` for command line (cat/tag/hide/split/undo on the selection). ~half day.
 
 This order is approximate — exact ordering depends on what the
 operator wants to drive daily. Buckets before rules because the Budget

@@ -123,18 +123,25 @@ decisions, see [docs/adr/](./docs/adr/).
 
 ### Transfer detection + Reimbursement linker
 - `GroupRepository` (already had tables, just lacked a port + impl): create / get / add-member / remove-member / list / list-members.
-- `ReimbursementService.Link` takes exactly 2 transaction IDs, validates currency match and opposite signs, creates a "reimbursement" group, writes 2 audit rows, rebuilds overlay. The overlay then shows the group as a single `reimbursement_group` row with the net amount (e.g. 0 if perfectly reimbursed).
+- `ReimbursementService.Link` takes exactly 2 transaction IDs, validates currency match and opposite signs, creates a "reimbursement" group, writes 2 audit rows (one per tx, both at the same timestamp), rebuilds overlay. The overlay shows the group as a single `reimbursement_group` row with the net amount (e.g. 0 if perfectly reimbursed).
 - `TransferService.Detect` heuristically finds pairs: opposite signs, same absolute amount, same currency, within a 3-day window. Scores by same-date bonus, partner-name match, description-substring match.
 - `TransferService.Confirm` turns a candidate into a persisted "transfer" group.
 - CLI: `ledger transfers detect | confirm <outID> <inID>` and `ledger reimburse link <expenseID> <reimbursementID>`.
-- TUI: Linker screen — shows detected candidates at the top, existing groups below, j/k to navigate, enter to confirm a candidate. Manual reimbursement linking still happens via the CLI for v1 (the TUI can show existing groups but doesn't have a two-pane selection UX yet).
+- TUI: Linker screen — shows detected candidates at the top, existing groups below, j/k to navigate, enter to confirm a candidate. Manual reimbursement linking still happens via the CLI for v1; the screen shows the resulting group list once a link is created.
+
+### Manager bulk actions
+- `x` toggles selection on the focused row; `X` clears the selection. Selected rows show an `x` marker in the second column.
+- `C` opens a category prompt and applies `BulkCategorize` to the selection.
+- `T` opens a tag prompt and applies `BulkAddTags` to the selection.
+- `H` applies `BulkSetHidden(true)` to the selection.
+- `U` calls `AnnotationService.Undo` (reverts the most recent batch regardless of selection).
+- All four action keys use the same atomic-annotation path as the CLI, so audit + overlay rebuild + undo are unchanged.
 
 ---
 
 ## ⏳ Next (priority order)
 
-1. **Manager bulk actions** — `x` to toggle select, `:` for command line (cat/tag/hide/split/undo on the selection). ~half day.
-2. **Distribution** — GoReleaser config + GH release workflow. ~half day.
+1. **Distribution** — GoReleaser config + GH release workflow. ~half day.
 
 This order is approximate — exact ordering depends on what the
 operator wants to drive daily. Buckets before rules because the Budget

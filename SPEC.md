@@ -46,7 +46,8 @@ v2 or later. For status of what's already shipped, see
 - 🚧 **5 screens**, navigated by `1..5`:
   1. **Manager** — transaction list, filter DSL (`desc:`, `partner:`,
      `iban:`, `min:`, `max:`, `sign:`, `category:`, `bucket:`, `id:`).
-     TUI ✓; bulk select + command line ⏳.
+     TUI ✓; bulk select (`x`/`X`), then `C` (categorize), `T` (tag),
+     `H` (hide), `U` (undo).
   2. **Categorizer** — unknown transactions, in-place c (category) / b
      (bucket) / t (tag) keys with single-character prompts. Auto-reloads
      after each action.

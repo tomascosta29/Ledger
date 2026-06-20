@@ -47,8 +47,9 @@ v2 or later. For status of what's already shipped, see
   1. **Manager** — transaction list, filter DSL (`desc:`, `partner:`,
      `iban:`, `min:`, `max:`, `sign:`, `category:`, `bucket:`, `id:`).
      TUI ✓; bulk select + command line ⏳.
-  2. **Categorizer** — unknown transactions, bulk categorize,
-     rule-create from focused tx. Stub.
+  2. **Categorizer** — unknown transactions, in-place c (category) / b
+     (bucket) / t (tag) keys with single-character prompts. Auto-reloads
+     after each action.
   3. **Linker** — expense pane + reimbursement pane, link into persisted
      group. Stub.
   4. **Budget** — per-bucket allocation + spent vs remaining for selected

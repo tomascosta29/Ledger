@@ -2,6 +2,8 @@ package screens
 
 import (
 	"context"
+	"database/sql"
+
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/tomascosta29/Ledger/internal/application/ports"
 )
@@ -18,15 +20,16 @@ type Screen interface {
 // Deps carries the things every screen needs (DB path, repositories,
 // services). Set once at App init and passed in via Init.
 type Deps struct {
-	DBPath       string
-	TxRepo       ports.TransactionRepository
-	TagRepo      ports.TagRepository
-	BucketRepo   ports.BucketRepository
-	AuditRepo    ports.AuditLogRepository
-	BatchRepo    ports.ImportBatchRepository
-	OverlayRepo  ports.OverlayRepository
-	OverlaySvc   ports.OverlayService
-	BudgetSvc    BudgetQuerier
+	DB          *sql.DB
+	DBPath      string
+	TxRepo      ports.TransactionRepository
+	TagRepo     ports.TagRepository
+	BucketRepo  ports.BucketRepository
+	AuditRepo   ports.AuditLogRepository
+	BatchRepo   ports.ImportBatchRepository
+	OverlayRepo ports.OverlayRepository
+	OverlaySvc  ports.OverlayService
+	BudgetSvc   BudgetQuerier
 }
 
 // BudgetQuerier is the slice of BucketService a screen actually needs.

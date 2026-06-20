@@ -24,6 +24,7 @@ func newDeps(t *testing.T) (screens.Deps, func()) {
 		t.Fatalf("migrate: %v", err)
 	}
 	deps := screens.Deps{
+		DB:          db.DB,
 		DBPath:      persistence.DefaultDBPath(),
 		TxRepo:      persistence.NewTransactionRepository(db),
 		TagRepo:     persistence.NewTagRepository(db),

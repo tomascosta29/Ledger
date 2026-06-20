@@ -440,6 +440,7 @@ func runTUI(cmd *cobra.Command, args []string) error {
 	defer db.Close()
 
 	deps := tuiScreens.Deps{
+		DB:          db.DB,
 		DBPath:      persistence.DefaultDBPath(),
 		TxRepo:      persistence.NewTransactionRepository(db),
 		TagRepo:     persistence.NewTagRepository(db),

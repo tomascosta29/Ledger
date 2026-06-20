@@ -97,16 +97,23 @@ decisions, see [docs/adr/](./docs/adr/).
 - Overlay repository extended with new filter fields: `PartnerName`, `PartnerIBAN`, `DescriptionLike`, `AmountMinMinor`, `AmountMaxMinor`, `AmountSign`, `BucketID`. SQL: `LIKE %...%` for substring match, exact for IBAN / category / id, `amount_minor >= / <= / < 0 / > 0` for the amount filters.
 - `j/k/g/G/pgup/pgdown` for navigation. The status line shows the current count after a filter apply.
 
+### Categorizer screen
+- TUI screen that lists the v1 "Unknown" transactions (category = 'Unknown', source_kind = 'raw', newest first) and lets the operator annotate in place. j/k nav, plus three single-letter prompts:
+  - `c` then type a category → categorize the focused row.
+  - `b` then type a bucket name → assign bucket (current category preserved).
+  - `t` then type a tag → add tag.
+- Each action runs through the existing AnnotationService (single-tx atomic, audit row, overlay rebuild) and the screen auto-reloads. Status line shows the new "X unknown remaining" count after every action.
+- Deps now carries the underlying `*sql.DB` so screens can build the AnnotationService that requires it for `BeginTx`.
+
 ---
 
 ## ⏳ Next (priority order)
 
-1. **Categorizer screen** — unknown-transactions list, bulk categorize, rule-create from focused tx. ~1-2 days.
-2. **Budget screen** — uses the buckets data; live allocation vs spend, period selector. ~1-2 days.
-3. **Recipes screen** — list / author / pick active recipe. Plus CLI: `ledger recipe list|show|use`. ~1-2 days.
-4. **Rules engine + apply** — `rules` table, `RuleService.Apply()`, `ledger rule list|create|apply`. Categorizer screen ties in. ~3-4 days.
-5. **Transfer detection + Linker** — `TransferDetectionService`, `ledger transfers detect`, Linker TUI screen for manual linking. ~2-3 days.
-6. **Manager bulk actions** — `x` to toggle select, `:` for command line (cat/tag/hide/split/undo on the selection). ~half day.
+1. **Budget screen** — uses the buckets data; live allocation vs spend, period selector. ~1-2 days.
+2. **Recipes screen** — list / author / pick active recipe. Plus CLI: `ledger recipe list|show|use`. ~1-2 days.
+3. **Rules engine + apply** — `rules` table, `RuleService.Apply()`, `ledger rule list|create|apply`. Categorizer screen ties in. ~3-4 days.
+4. **Transfer detection + Linker** — `TransferDetectionService`, `ledger transfers detect`, Linker TUI screen for manual linking. ~2-3 days.
+5. **Manager bulk actions** — `x` to toggle select, `:` for command line (cat/tag/hide/split/undo on the selection). ~half day.
 
 This order is approximate — exact ordering depends on what the
 operator wants to drive daily. Buckets before rules because the Budget

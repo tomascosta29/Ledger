@@ -116,13 +116,17 @@ decisions, see [docs/adr/](./docs/adr/).
 - CLI: `ledger recipe list|show|use|new` and `ledger summary [--recipe NAME] [--month YYYY-MM]` (defaults to active recipe + current month).
 - TUI: Recipes screen — j/k to navigate, `u` to set the focused recipe as active.
 
+### Rules engine
+- Migration `00008_rules.sql`: `rules` table with `name`, `priority`, matchers (`match_partner`, `match_description`, `match_amount_min`, `match_amount_max`), effects (`set_category`, `set_bucket_id`, `add_tags`), `enabled` flag. All fields are optional except `name` and `enabled`; null matchers are skipped.
+- `RuleService.Apply()` walks enabled rules in priority order, scans every transaction, calls the existing `AnnotationService` for each match. "No overwrite" semantics: only sets `category` if currently "Unknown", only sets `bucket` if currently `null`, only adds tags that aren't already present. All writes go through AnnotationService so they're atomic and audited; the existing `undo` reverses per-application-batch.
+- CLI: `ledger rule list|create|delete|apply`. `apply` prints "X matched, Y applied, Z skipped" plus per-rule counts.
+
 ---
 
 ## ⏳ Next (priority order)
 
-1. **Rules engine + apply** — `rules` table, `RuleService.Apply()`, `ledger rule list|create|apply`. Categorizer screen ties in. ~3-4 days.
-2. **Transfer detection + Linker** — `TransferDetectionService`, `ledger transfers detect`, Linker TUI screen for manual linking. ~2-3 days.
-3. **Manager bulk actions** — `x` to toggle select, `:` for command line (cat/tag/hide/split/undo on the selection). ~half day.
+1. **Transfer detection + Linker** — `TransferDetectionService`, `ledger transfers detect`, Linker TUI screen for manual linking. ~2-3 days.
+2. **Manager bulk actions** — `x` to toggle select, `:` for command line (cat/tag/hide/split/undo on the selection). ~half day.
 
 This order is approximate — exact ordering depends on what the
 operator wants to drive daily. Buckets before rules because the Budget

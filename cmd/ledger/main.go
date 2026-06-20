@@ -62,6 +62,7 @@ func init() {
 	rootCmd.AddCommand(budgetCmd)
 	rootCmd.AddCommand(recipeCmd)
 	rootCmd.AddCommand(summaryCmd)
+	rootCmd.AddCommand(ruleCmd)
 	importCmd.Flags().StringVarP(&importProfile, "profile", "p", "", "bank profile (erste, revolut, or custom TOML)")
 	importCmd.Flags().BoolVar(&importDryRun, "dry-run", false, "parse and preview without writing to the DB")
 	listCmd.Flags().IntVar(&listLimit, "limit", 50, "max number of rows to show")
@@ -638,6 +639,270 @@ func mustHome() string {
 		return "."
 	}
 	return h
+}
+
+var ruleCmd = &cobra.Command{
+	Use:   "rule",
+	Short: "Manage annotation rules",
+}
+
+var (
+	ruleCreatePriority       int
+	ruleCreatePartner        string
+	ruleCreateDescription    string
+	ruleCreateAmountMin      string
+	ruleCreateAmountMax      string
+	ruleCreateCategory       string
+	ruleCreateBucket         string
+	ruleCreateTags           string
+	ruleCreateDisabled       bool
+)
+
+func init() {
+	ruleCmd.AddCommand(ruleListCmd)
+	ruleCmd.AddCommand(ruleCreateCmd)
+	ruleCmd.AddCommand(ruleDeleteCmd)
+	ruleCmd.AddCommand(ruleApplyCmd)
+	ruleCreateCmd.Flags().IntVar(&ruleCreatePriority, "priority", 0, "rule priority (higher = applied first)")
+	ruleCreateCmd.Flags().StringVar(&ruleCreatePartner, "partner", "", "match: partner name (exact, case-insensitive)")
+	ruleCreateCmd.Flags().StringVar(&ruleCreateDescription, "description", "", "match: description substring (case-insensitive)")
+	ruleCreateCmd.Flags().StringVar(&ruleCreateAmountMin, "min", "", "match: amount >= <n> (major units, e.g. 100.00)")
+	ruleCreateCmd.Flags().StringVar(&ruleCreateAmountMax, "max", "", "match: amount <= <n> (major units)")
+	ruleCreateCmd.Flags().StringVar(&ruleCreateCategory, "category", "", "set: category (only if currently Unknown)")
+	ruleCreateCmd.Flags().StringVar(&ruleCreateBucket, "bucket", "", "set: bucket name (only if currently unset)")
+	ruleCreateCmd.Flags().StringVar(&ruleCreateTags, "add-tags", "", "set: comma-separated tags to add (only if not present)")
+	ruleCreateCmd.Flags().BoolVar(&ruleCreateDisabled, "disabled", false, "create the rule disabled")
+}
+
+var ruleListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List rules",
+	Args:  cobra.NoArgs,
+	RunE:  runRuleList,
+}
+
+func runRuleList(cmd *cobra.Command, args []string) error {
+	ctx := ctxFromCmd(cmd)
+	db, err := openDB(ctx)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	repo := persistence.NewRuleRepository(db)
+	all, err := repo.List(ctx, false)
+	if err != nil {
+		return err
+	}
+	if len(all) == 0 {
+		fmt.Println("no rules")
+		return nil
+	}
+	fmt.Printf("%-4s  %-4s  %-7s  %-20s  %s\n", "ID", "PRI", "ENABLED", "MATCH", "EFFECT")
+	for _, r := range all {
+		match := formatRuleMatch(*r)
+		effect := formatRuleEffect(*r)
+		fmt.Printf("%-4d  %-4d  %-7s  %-20s  %s\n",
+			r.ID, r.Priority, ifElse(r.Enabled, "yes", "no"),
+			match, effect)
+	}
+	return nil
+}
+
+func formatRuleMatch(r entities.Rule) string {
+	var parts []string
+	if r.MatchPartner != nil {
+		parts = append(parts, "partner="+*r.MatchPartner)
+	}
+	if r.MatchDescription != nil {
+		parts = append(parts, "desc~"+*r.MatchDescription)
+	}
+	if r.MatchAmountMin != nil {
+		parts = append(parts, fmt.Sprintf("min=%d", *r.MatchAmountMin))
+	}
+	if r.MatchAmountMax != nil {
+		parts = append(parts, fmt.Sprintf("max=%d", *r.MatchAmountMax))
+	}
+	if len(parts) == 0 {
+		return "(any)"
+	}
+	return strings.Join(parts, " ")
+}
+
+func formatRuleEffect(r entities.Rule) string {
+	var parts []string
+	if r.SetCategory != nil {
+		parts = append(parts, "cat="+*r.SetCategory)
+	}
+	if r.SetBucketID != nil {
+		parts = append(parts, fmt.Sprintf("bucket=%d", *r.SetBucketID))
+	}
+	if len(r.AddTags) > 0 {
+		parts = append(parts, "+tags="+strings.Join(r.AddTags, ","))
+	}
+	if len(parts) == 0 {
+		return "(no-op)"
+	}
+	return strings.Join(parts, " ")
+}
+
+var ruleCreateCmd = &cobra.Command{
+	Use:   "create <name>",
+	Short: "Create a rule",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runRuleCreate,
+}
+
+func runRuleCreate(cmd *cobra.Command, args []string) error {
+	ctx := ctxFromCmd(cmd)
+	db, err := openDB(ctx)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	rule := &entities.Rule{
+		Name:     args[0],
+		Priority: ruleCreatePriority,
+		Enabled:  !ruleCreateDisabled,
+	}
+	if ruleCreatePartner != "" {
+		s := ruleCreatePartner
+		rule.MatchPartner = &s
+	}
+	if ruleCreateDescription != "" {
+		s := ruleCreateDescription
+		rule.MatchDescription = &s
+	}
+	if ruleCreateAmountMin != "" {
+		v, err := valueobjects.ParseDecimal(ruleCreateAmountMin, valueobjects.EUR)
+		if err != nil {
+			return fmt.Errorf("min: %w", err)
+		}
+		v2 := v.Amount
+		rule.MatchAmountMin = &v2
+	}
+	if ruleCreateAmountMax != "" {
+		v, err := valueobjects.ParseDecimal(ruleCreateAmountMax, valueobjects.EUR)
+		if err != nil {
+			return fmt.Errorf("max: %w", err)
+		}
+		v2 := v.Amount
+		rule.MatchAmountMax = &v2
+	}
+	if ruleCreateCategory != "" {
+		s := ruleCreateCategory
+		rule.SetCategory = &s
+	}
+	if ruleCreateBucket != "" {
+		bucketRepo := persistence.NewBucketRepository(db)
+		b, err := bucketRepo.GetByName(ctx, ruleCreateBucket)
+		if err != nil {
+			if errors.Is(err, ports.ErrNotFound) {
+				return fmt.Errorf("bucket %q not found", ruleCreateBucket)
+			}
+			return err
+		}
+		id := b.ID
+		rule.SetBucketID = &id
+	}
+	if ruleCreateTags != "" {
+		rule.AddTags = strings.Split(ruleCreateTags, ",")
+		for i, t := range rule.AddTags {
+			rule.AddTags[i] = strings.TrimSpace(t)
+		}
+	}
+
+	repo := persistence.NewRuleRepository(db)
+	id, err := repo.Create(ctx, rule)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("✓ rule %d created: %s\n", id, rule.Name)
+	return nil
+}
+
+var ruleDeleteCmd = &cobra.Command{
+	Use:   "delete <id>",
+	Short: "Delete a rule",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runRuleDelete,
+}
+
+func runRuleDelete(cmd *cobra.Command, args []string) error {
+	id, err := parseInt64List(args[0])
+	if err != nil {
+		return err
+	}
+	if len(id) != 1 {
+		return fmt.Errorf("rule delete takes a single id")
+	}
+	ctx := ctxFromCmd(cmd)
+	db, err := openDB(ctx)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	repo := persistence.NewRuleRepository(db)
+	if err := repo.Delete(ctx, id[0]); err != nil {
+		if errors.Is(err, ports.ErrNotFound) {
+			return fmt.Errorf("rule %d not found", id[0])
+		}
+		return err
+	}
+	fmt.Printf("✓ rule %d deleted\n", id[0])
+	return nil
+}
+
+var ruleApplyCmd = &cobra.Command{
+	Use:   "apply",
+	Short: "Apply all enabled rules to all transactions",
+	Args:  cobra.NoArgs,
+	RunE:  runRuleApply,
+}
+
+func runRuleApply(cmd *cobra.Command, args []string) error {
+	ctx := ctxFromCmd(cmd)
+	db, err := openDB(ctx)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	annSvc := services.NewAnnotationService(services.AnnotationDeps{
+		DB:         db.DB,
+		TxRepo:     persistence.NewTransactionRepository(db),
+		TagRepo:    persistence.NewTagRepository(db),
+		BucketRepo: persistence.NewBucketRepository(db),
+		AuditRepo:  persistence.NewAuditLogRepository(db),
+		BatchRepo:  persistence.NewImportBatchRepository(db),
+		OverlaySvc: services.NewOverlayService(db.DB),
+	})
+	ruleSvc := services.NewRuleService(services.RuleDeps{
+		TxRepo:     persistence.NewTransactionRepository(db),
+		TagRepo:    persistence.NewTagRepository(db),
+		BucketRepo: persistence.NewBucketRepository(db),
+		RuleRepo:   persistence.NewRuleRepository(db),
+		AnnService: annSvc,
+	})
+	result, err := ruleSvc.Apply(ctx)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("✓ rules applied: %d matched, %d applied, %d skipped (no-op)\n",
+		result.Matched, result.Applied, result.Skipped)
+	for id, n := range result.ByRule {
+		if n == 0 {
+			continue
+		}
+		fmt.Printf("  rule %d → %d tx\n", id, n)
+	}
+	if len(result.Errors) > 0 {
+		fmt.Printf("  %d errors:\n", len(result.Errors))
+		for _, e := range result.Errors {
+			fmt.Printf("    - %v\n", e)
+		}
+	}
+	return nil
 }
 
 var tuiCmd = &cobra.Command{

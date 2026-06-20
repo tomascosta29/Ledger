@@ -76,6 +76,12 @@ decisions, see [docs/adr/](./docs/adr/).
 - `AuditActionBucket = "bucket_assign"` — Undo handles it by restoring the prior bucket_id.
 - CLI: `ledger bucket list|create|update|archive|delete` and `ledger budget [--month YYYY-MM]`.
 
+### Manual add / Show / History
+- `commands.ManualAddUseCase` — single-transaction entry outside the CSV import flow. Source hash is computed from the inputs (profile "manual" v1), so re-running with the same arguments is a no-op. Writes an `import` audit row, rebuilds the overlay. Bucket / category / partner / IBAN are all optional.
+- `ledger add` (CLI).
+- `ledger show <txID>` — full transaction detail incl. tags and bucket.
+- `ledger history [--tx-id N] [--action A] [--limit N]` — audit log viewer.
+
 ---
 
 ## ⏳ Next (priority order)
@@ -88,8 +94,6 @@ decisions, see [docs/adr/](./docs/adr/).
 6. **Rules engine + apply** — `rules` table, `RuleService.Apply()`, `ledger rule list|create|apply`. Categorizer screen ties in. ~3-4 days.
 7. **Splits** — CLI: `ledger split <id>` (interactive). TUI screen later. ~1-2 days for CLI.
 8. **Transfer detection** — `TransferDetectionService`, `ledger transfers detect`. Linker screen ties in. ~2-3 days.
-9. **Manual `add`** — CLI subcommand + TUI modal. ~half day.
-10. **Show + History** — small CLI commands for transaction detail and audit log viewer. ~half day combined.
 
 This order is approximate — exact ordering depends on what the
 operator wants to drive daily. Buckets before rules because the Budget

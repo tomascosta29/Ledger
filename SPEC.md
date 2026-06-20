@@ -68,7 +68,7 @@ v2 or later. For status of what's already shipped, see
 | Feature                                                  | Status | Notes                                                                |
 | -------------------------------------------------------- | ------ | -------------------------------------------------------------------- |
 | CSV import (Erste + Revolut)                             | ✓      | `ledger import <file> --profile NAME [--dry-run]`                    |
-| Manual `add`                                             | ⏳      | CLI subcommand + TUI modal                                           |
+| Manual `add`                                             | ✓      | CLI done; TUI modal ⏳                                               |
 | Buckets (per-bucket allocation, assigned to txns)       | ✓      | `--bucket` on categorize; `ledger bucket list|create|...`; `ledger budget [--month]` |
 | Bulk categorize / tag / hide                             | ✓      | Atomic across all ids; one undo reverts the whole batch; TUI screen ⏳ |
 | Splits (parent/child)                                    | ⏳      | Schema + overlay support ✓; CLI + TUI ⏳                            |
@@ -78,7 +78,7 @@ v2 or later. For status of what's already shipped, see
 | Summary recipes (include/exclude/amortize/net, TOML)    | ⏳      | Recipes screen + CLI flag                                            |
 | Budget (per-bucket allocation, spent vs allocated)       | ✓      | `ledger budget [--month]`; Budget TUI screen ⏳                      |
 | Undo (reverse-last-batch, atomic)                        | ✓      | Audit log captures every change; one method to write                |
-| History (audit log viewer)                               | ⏳      | `ledger history` command                                            |
+| History (audit log viewer)                               | ✓      | `ledger history` command                                            |
 | Multi-currency grouping                                  | ✓      | No FX, no config                                                     |
 | Overlay (materialized read model)                       | ✓      | See [ADR 0002](./docs/adr/0002-overlay-rebuild-strategy.md)        |
 | Tag storage as join table                                | ✓      | See [ADR 0004](./docs/adr/0004-tag-storage.md)                      |
@@ -96,7 +96,10 @@ v2 or later. For status of what's already shipped, see
 ```
 ledger init                          # create DB + run migrations
 ledger import <file> --profile NAME  # CSV ingest (Erste, Revolut, custom TOML)
+ledger add [--date D] --amount A --currency C --description D [--partner] [--iban] [--category]
 ledger list [--limit N] [--category X] [--since YYYY-MM-DD]
+ledger show <txID>                   # transaction detail
+ledger history [--tx-id N] [--action A] [--limit N]
 ledger rebuild-overlay               # full overlay rebuild (drift recovery)
 ledger categorize <id1,id2,...> --category X [--bucket NAME]
 ledger hide <id1,id2,...> [--unhide]
@@ -110,10 +113,7 @@ ledger tui                           # placeholder; full TUI ⏳
 ### ⏳ Next
 
 ```
-ledger add                           # manual transaction entry
-ledger show <txID>                   # transaction detail
 ledger split <txID>                  # split into N children
-ledger history [--tx-id N]           # audit log viewer
 ledger transfers detect              # heuristic transfer detection
 ledger reimburse link                # manual group linking
 ledger rule list|create|apply        # rules engine

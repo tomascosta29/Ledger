@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -45,6 +46,9 @@ func init() {
 	rootCmd.AddCommand(importCmd)
 	rootCmd.AddCommand(listCmd)
 	rootCmd.AddCommand(rebuildOverlayCmd)
+	rootCmd.AddCommand(addCmd)
+	rootCmd.AddCommand(showCmd)
+	rootCmd.AddCommand(historyCmd)
 	rootCmd.AddCommand(categorizeCmd)
 	rootCmd.AddCommand(hideCmd)
 	rootCmd.AddCommand(tagCmd)
@@ -57,6 +61,217 @@ func init() {
 	listCmd.Flags().StringVar(&listCategory, "category", "", "filter by category")
 	listCmd.Flags().BoolVar(&listIncludeHidden, "include-hidden", false, "include hidden transactions")
 	listCmd.Flags().StringVar(&listSince, "since", "", "filter rows effective on or after YYYY-MM-DD")
+}
+
+var addCmd = &cobra.Command{
+	Use:   "add",
+	Short: "Add a transaction manually (outside the bank statement flow)",
+	Long: `add creates a single Raw Transaction with the given fields. The
+source hash is computed from the inputs (profile "manual" v1), so
+re-running add with the same arguments is a no-op. Use --category to
+set the category at insert time; otherwise the default "Unknown"
+applies and can be changed with 'ledger categorize'.`,
+	Args: cobra.NoArgs,
+	RunE: runAdd,
+}
+
+func runAdd(cmd *cobra.Command, args []string) error {
+	date, _ := cmd.Flags().GetString("date")
+	amount, _ := cmd.Flags().GetString("amount")
+	currency, _ := cmd.Flags().GetString("currency")
+	description, _ := cmd.Flags().GetString("description")
+	partner, _ := cmd.Flags().GetString("partner")
+	iban, _ := cmd.Flags().GetString("iban")
+	category, _ := cmd.Flags().GetString("category")
+
+	ctx := ctxFromCmd(cmd)
+	db, err := openDB(ctx)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	uc := commands.NewManualAddUseCase(commands.ManualAddDeps{
+		TxRepo:     persistence.NewTransactionRepository(db),
+		AuditRepo:  persistence.NewAuditLogRepository(db),
+		OverlaySvc: services.NewOverlayService(db.DB),
+	})
+	result, err := uc.Execute(ctx, commands.ManualAddOptions{
+		EffectiveDate: date,
+		Amount:        amount,
+		Currency:      currency,
+		Description:   description,
+		PartnerName:   partner,
+		PartnerIBAN:   iban,
+		Category:      category,
+	})
+	if err != nil {
+		return err
+	}
+	if result.Created {
+		fmt.Printf("✓ added transaction %d: %s %s %s (%s)\n",
+			result.TransactionID, amount, currency, description, date)
+	} else {
+		fmt.Printf("✓ transaction %d already exists with these fields (no-op)\n", result.TransactionID)
+	}
+	return nil
+}
+
+func init() {
+	addCmd.Flags().StringP("date", "d", "", "effective date (YYYY-MM-DD) (required)")
+	addCmd.Flags().StringP("amount", "a", "", "amount in major units, e.g. -42.10 or 100.00 (required)")
+	addCmd.Flags().StringP("currency", "c", "", "currency (e.g. EUR) (required)")
+	addCmd.Flags().StringP("description", "D", "", "description (required)")
+	addCmd.Flags().StringP("partner", "p", "", "partner name (optional)")
+	addCmd.Flags().String("iban", "", "partner IBAN (optional)")
+	addCmd.Flags().String("category", "", "category (default: Unknown)")
+}
+
+var showCmd = &cobra.Command{
+	Use:   "show <txID>",
+	Short: "Show details of a single transaction",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runShow,
+}
+
+func runShow(cmd *cobra.Command, args []string) error {
+	ids, err := parseInt64List(args[0])
+	if err != nil {
+		return err
+	}
+	if len(ids) != 1 {
+		return fmt.Errorf("show takes a single transaction id")
+	}
+	ctx := ctxFromCmd(cmd)
+	db, err := openDB(ctx)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	txRepo := persistence.NewTransactionRepository(db)
+	tagRepo := persistence.NewTagRepository(db)
+	bucketRepo := persistence.NewBucketRepository(db)
+
+	txn, err := txRepo.GetByID(ctx, ids[0])
+	if err != nil {
+		if errors.Is(err, ports.ErrNotFound) {
+			return fmt.Errorf("transaction %d not found", ids[0])
+		}
+		return err
+	}
+
+	fmt.Printf("Transaction %d\n", txn.ID)
+	fmt.Printf("  Date:        %s\n", txn.EffectiveDate)
+	fmt.Printf("  Amount:      %s\n", txn.Amount.String())
+	fmt.Printf("  Description: %s\n", txn.Description)
+	if txn.PartnerName != nil {
+		fmt.Printf("  Partner:     %s\n", *txn.PartnerName)
+	}
+	if txn.PartnerIBAN != nil {
+		fmt.Printf("  IBAN:        %s\n", *txn.PartnerIBAN)
+	}
+	fmt.Printf("  Category:    %s\n", txn.Category)
+	if txn.BucketID != nil {
+		bucket, err := bucketRepo.GetByID(ctx, *txn.BucketID)
+		if err == nil {
+			fmt.Printf("  Bucket:      %s\n", bucket.Name)
+		}
+	}
+	if txn.IsHidden {
+		fmt.Printf("  Hidden:      yes\n")
+	}
+	if txn.ExcludeFromReports {
+		fmt.Printf("  Excluded:    yes\n")
+	}
+	if txn.ImportBatchID != nil {
+		fmt.Printf("  Import batch: %d\n", *txn.ImportBatchID)
+	}
+	if txn.ParentTxnID != nil {
+		fmt.Printf("  Split parent: %d\n", *txn.ParentTxnID)
+	}
+	fmt.Printf("  Source hash: %s\n", txn.SourceHash)
+	fmt.Printf("  Created:     %s\n", txn.CreatedAt.Format("2006-01-02 15:04:05"))
+	fmt.Printf("  Updated:     %s\n", txn.UpdatedAt.Format("2006-01-02 15:04:05"))
+
+	tags, _ := tagRepo.ListByTransaction(ctx, txn.ID)
+	if len(tags) > 0 {
+		fmt.Printf("  Tags:        %s\n", strings.Join(tags, ", "))
+	}
+	return nil
+}
+
+var historyCmd = &cobra.Command{
+	Use:   "history",
+	Short: "Show the audit log",
+	Long: `history prints the audit log, one entry per line. Use --tx-id to
+filter to a single transaction, --action to filter by action type
+(import, categorize, visibility, tag, bucket_assign, split, undo, ...),
+and --limit to cap the number of rows (default 50, newest first).`,
+	Args: cobra.NoArgs,
+	RunE: runHistory,
+}
+
+func runHistory(cmd *cobra.Command, args []string) error {
+	ctx := ctxFromCmd(cmd)
+	txID, _ := cmd.Flags().GetInt64("tx-id")
+	action, _ := cmd.Flags().GetString("action")
+	limit, _ := cmd.Flags().GetInt("limit")
+
+	db, err := openDB(ctx)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	repo := persistence.NewAuditLogRepository(db)
+
+	filter := ports.AuditEntryFilter{Limit: limit}
+	if txID > 0 {
+		filter.RecordID = &txID
+	}
+	if action != "" {
+		filter.Action = &action
+	}
+	entries, err := repo.Query(ctx, filter)
+	if err != nil {
+		return err
+	}
+	if len(entries) == 0 {
+		fmt.Println("no audit entries")
+		return nil
+	}
+	fmt.Printf("%-23s  %-5s  %-15s  %-7s  %-10s  %-10s  %s\n", "WHEN", "TX", "ACTION", "FIELD", "OLD", "NEW", "ID")
+	for _, e := range entries {
+		old, new := "", ""
+		if e.OldValue != nil {
+			old = truncate(*e.OldValue, 10)
+		}
+		if e.NewValue != nil {
+			new = truncate(*e.NewValue, 10)
+		}
+		fmt.Printf("%-23s  %-5d  %-15s  %-7s  %-10s  %-10s  %d\n",
+			e.CreatedAt.Format("2006-01-02 15:04:05.000"),
+			e.RecordID,
+			e.Action,
+			derefStr(e.Field),
+			old, new,
+			e.ID,
+		)
+	}
+	return nil
+}
+
+func derefStr(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+func init() {
+	historyCmd.Flags().Int64("tx-id", 0, "filter to a single transaction id")
+	historyCmd.Flags().String("action", "", "filter by action (import, categorize, visibility, tag, bucket_assign, undo, ...)")
+	historyCmd.Flags().Int("limit", 50, "max number of rows to show")
 }
 
 var tuiCmd = &cobra.Command{

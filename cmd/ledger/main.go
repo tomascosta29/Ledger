@@ -60,6 +60,8 @@ func init() {
 	rootCmd.AddCommand(undoCmd)
 	rootCmd.AddCommand(bucketCmd)
 	rootCmd.AddCommand(budgetCmd)
+	rootCmd.AddCommand(recipeCmd)
+	rootCmd.AddCommand(summaryCmd)
 	importCmd.Flags().StringVarP(&importProfile, "profile", "p", "", "bank profile (erste, revolut, or custom TOML)")
 	importCmd.Flags().BoolVar(&importDryRun, "dry-run", false, "parse and preview without writing to the DB")
 	listCmd.Flags().IntVar(&listLimit, "limit", 50, "max number of rows to show")
@@ -425,6 +427,219 @@ func init() {
 	splitCmd.Flags().StringSlice("child", nil, "child spec 'amount|description' (repeat for each child)")
 }
 
+var recipeCmd = &cobra.Command{
+	Use:   "recipe",
+	Short: "Manage summary recipes",
+}
+
+var summaryCmd = &cobra.Command{
+	Use:   "summary [--recipe NAME] [--month YYYY-MM]",
+	Short: "Print a summary using a recipe (defaults to the active recipe)",
+	Long: `summary applies a summary recipe to a month's transactions and prints
+income, expense, and net per currency. Use --recipe to pick a recipe
+inline; otherwise the active recipe (set via 'ledger recipe use') is
+used. Use --month to pick a month; default is the current month.
+
+A recipe is a TOML file in $LEDGER_RECIPES_DIR (default
+~/.config/ledger/recipes/*.toml).`,
+	Args: cobra.NoArgs,
+	RunE: runSummary,
+}
+
+func runSummary(cmd *cobra.Command, args []string) error {
+	ctx := ctxFromCmd(cmd)
+	recipe, _ := cmd.Flags().GetString("recipe")
+	month, _ := cmd.Flags().GetString("month")
+
+	db, err := openDB(ctx)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	svc := services.NewSummaryService(services.SummaryDeps{
+		OverlayRepo: persistence.NewOverlayRepository(db),
+		RecipeRepo:  persistence.NewRecipeRepository(db),
+		TagRepo:     persistence.NewTagRepository(db),
+	})
+	result, err := svc.Run(ctx, recipe, month)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Summary for %s (recipe: %s)\n\n", result.Month, result.RecipeName)
+	fmt.Printf("  %-8s  %14s  %14s  %14s  %s\n", "CURRENCY", "INCOME", "EXPENSE", "NET", "TX")
+	for _, l := range result.Lines {
+		income, _ := valueobjects.New(l.Income, l.Currency)
+		expense, _ := valueobjects.New(l.Expense, l.Currency)
+		net, _ := valueobjects.New(l.Net, l.Currency)
+		fmt.Printf("  %-8s  %14s  %14s  %14s  %d\n",
+			l.Currency,
+			income.DecimalString()+" "+string(l.Currency),
+			expense.DecimalString()+" "+string(l.Currency),
+			net.DecimalString()+" "+string(l.Currency),
+			l.Count,
+		)
+	}
+	if len(result.Lines) == 0 {
+		fmt.Println("  (no transactions matched this recipe for the given month)")
+	}
+	return nil
+}
+
+func init() {
+	summaryCmd.Flags().StringP("recipe", "r", "", "recipe name (default: active recipe)")
+	summaryCmd.Flags().StringP("month", "m", "", "month in YYYY-MM (default: current month)")
+	recipeCmd.AddCommand(recipeListCmd)
+	recipeCmd.AddCommand(recipeShowCmd)
+	recipeCmd.AddCommand(recipeUseCmd)
+	recipeCmd.AddCommand(recipeNewCmd)
+}
+
+var recipeListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List recipes",
+	Args:  cobra.NoArgs,
+	RunE:  runRecipeList,
+}
+
+func runRecipeList(cmd *cobra.Command, args []string) error {
+	ctx := ctxFromCmd(cmd)
+	db, err := openDB(ctx)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	repo := persistence.NewRecipeRepository(db)
+	all, err := repo.LoadAll(ctx)
+	if err != nil {
+		return err
+	}
+	active, _ := repo.GetActiveName(ctx)
+	if len(all) == 0 {
+		fmt.Printf("no recipes found in %s\n", os.Getenv("LEDGER_RECIPES_DIR"))
+		return nil
+	}
+	fmt.Printf("%-30s  %s\n", "NAME", "DESCRIPTION")
+	for _, r := range all {
+		marker := "  "
+		if r.Name == active {
+			marker = "* "
+		}
+		fmt.Printf("%s%-28s  %s\n", marker, r.Name, r.Description)
+	}
+	return nil
+}
+
+var recipeShowCmd = &cobra.Command{
+	Use:   "show <name>",
+	Short: "Show a recipe",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runRecipeShow,
+}
+
+func runRecipeShow(cmd *cobra.Command, args []string) error {
+	ctx := ctxFromCmd(cmd)
+	db, err := openDB(ctx)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	repo := persistence.NewRecipeRepository(db)
+	r, err := repo.LoadByName(ctx, args[0])
+	if err != nil {
+		if errors.Is(err, ports.ErrNotFound) {
+			return fmt.Errorf("recipe %q not found", args[0])
+		}
+		return err
+	}
+	fmt.Printf("name        = %q\n", r.Name)
+	if r.Description != "" {
+		fmt.Printf("description = %q\n", r.Description)
+	}
+	fmt.Printf("net         = %v\n", r.Net)
+	for _, c := range r.Include {
+		fmt.Printf("include     = %s %s %q\n", c.Field, c.Op, c.Value)
+	}
+	for _, c := range r.Exclude {
+		fmt.Printf("exclude     = %s %s %q\n", c.Field, c.Op, c.Value)
+	}
+	return nil
+}
+
+var recipeUseCmd = &cobra.Command{
+	Use:   "use <name>",
+	Short: "Make a recipe the active one",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runRecipeUse,
+}
+
+func runRecipeUse(cmd *cobra.Command, args []string) error {
+	ctx := ctxFromCmd(cmd)
+	db, err := openDB(ctx)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	repo := persistence.NewRecipeRepository(db)
+	if _, err := repo.LoadByName(ctx, args[0]); err != nil {
+		if errors.Is(err, ports.ErrNotFound) {
+			return fmt.Errorf("recipe %q not found", args[0])
+		}
+		return err
+	}
+	if err := repo.SetActiveName(ctx, args[0]); err != nil {
+		return err
+	}
+	fmt.Printf("✓ active recipe set to %q\n", args[0])
+	return nil
+}
+
+var recipeNewCmd = &cobra.Command{
+	Use:   "new <name>",
+	Short: "Create a new empty recipe file",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runRecipeNew,
+}
+
+func runRecipeNew(cmd *cobra.Command, args []string) error {
+	db, err := openDB(cmd.Context())
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	_ = db
+	dir := os.Getenv("LEDGER_RECIPES_DIR")
+	if dir == "" {
+		dir = filepath.Join(mustHome(), ".config", "ledger", "recipes")
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	path := filepath.Join(dir, args[0]+".toml")
+	if _, err := os.Stat(path); err == nil {
+		return fmt.Errorf("recipe file %s already exists", path)
+	}
+	contents := fmt.Sprintf(`name = %q
+description = ""
+include = []
+exclude = []
+net = false
+`, args[0])
+	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+		return err
+	}
+	fmt.Printf("✓ created %s\n", path)
+	return nil
+}
+
+func mustHome() string {
+	h, _ := os.UserHomeDir()
+	if h == "" {
+		return "."
+	}
+	return h
+}
+
 var tuiCmd = &cobra.Command{
 	Use:   "tui",
 	Short: "Open the LedgerPro TUI (default if no subcommand given)",
@@ -450,6 +665,7 @@ func runTUI(cmd *cobra.Command, args []string) error {
 		OverlayRepo: persistence.NewOverlayRepository(db),
 		OverlaySvc:  services.NewOverlayService(db.DB),
 		BudgetSvc:   persistence.NewBucketRepository(db),
+		RecipeSvc:   persistence.NewRecipeRepository(db),
 	}
 
 	app := tui.NewApp(ctx, deps)

@@ -34,6 +34,7 @@ func newDeps(t *testing.T) (screens.Deps, func()) {
 		OverlayRepo: persistence.NewOverlayRepository(db),
 		OverlaySvc:  services.NewOverlayService(db.DB),
 		BudgetSvc:   persistence.NewBucketRepository(db),
+		RecipeSvc:   persistence.NewRecipeRepository(db),
 	}
 	return deps, func() { _ = db.Close() }
 }

@@ -54,7 +54,8 @@ v2 or later. For status of what's already shipped, see
      group. Stub.
   4. **Budget** — per-bucket allocation + spent vs remaining for selected
      period. TUI ✓ (n/p ± month, T today, r reload).
-  5. **Recipes** — list / author / pick active recipe. Stub.
+  5. **Recipes** — list / author / pick active recipe. TUI ✓ (j/k, u
+     use active); CLI: `ledger recipe list|show|use|new`.
 - 🚧 **Status bar** (always visible): DB path, current screen, mode badge
   (`NORMAL` / `COMMAND` / `HELP`), transient status message.
 - 🚧 **Keybindings**: vim-style modal.
@@ -75,7 +76,7 @@ v2 or later. For status of what's already shipped, see
 | Rules (category+bucket+tags, priority, no overwrite)    | ⏳      | Author via Categorizer or CLI                                       |
 | Reimbursement linker                                     | ⏳      | Persisted group, Linker screen                                      |
 | Transfer detection (heuristic, persisted groups)        | ⏳      | Interactive confirm, `ledger transfers detect`                       |
-| Summary recipes (include/exclude/amortize/net, TOML)    | ⏳      | Recipes screen + CLI flag                                            |
+| Summary recipes (include/exclude/amortize/net, TOML)    | ✓      | TUI + CLI done; amortize is v2 (TOML loads; service handles include / exclude / net) |
 | Budget (per-bucket allocation, spent vs allocated)       | ✓      | `ledger budget [--month]`; Budget TUI screen ⏳                      |
 | Undo (reverse-last-batch, atomic)                        | ✓      | Audit log captures every change; one method to write                |
 | History (audit log viewer)                               | ✓      | `ledger history` command                                            |
@@ -116,8 +117,8 @@ ledger tui                           # placeholder; full TUI ⏳
 ledger transfers detect              # heuristic transfer detection
 ledger reimburse link                # manual group linking
 ledger rule list|create|apply        # rules engine
-ledger summary [--recipe R] [--month YYYY-MM]
-ledger recipe list|show|use          # summary recipes
+ledger recipe list|show|use          # summary recipes (CLI done; TUI ✓)
+ledger summary [--recipe R] [--month YYYY-MM]  # done
 ```
 
 ## 6. Domain vocabulary

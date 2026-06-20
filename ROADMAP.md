@@ -109,14 +109,20 @@ decisions, see [docs/adr/](./docs/adr/).
 - TUI screen that mirrors the `ledger budget` CLI: per-bucket allocation vs spend, plus unassigned. Reads via the same BucketQuerier (SpendByMonth / UnassignedSpendByMonth) the CLI uses — no separate logic path.
 - Keys: `n` / `p` step the month by ±1; `T` jumps to the current month; `r` reloads. The screen defaults to the current month on init.
 
+### Recipes + Summary
+- Migration `00007_recipes_state.sql`: a one-row `recipes_state(key, value)` for `key='active'` so the active recipe persists across runs.
+- Recipes themselves are TOML files in `$LEDGER_RECIPES_DIR` (default `~/.config/ledger/recipes/*.toml`). Schema: `name`, `description`, `include = [{field, op, value}, ...]`, `exclude = [...]`, `net = bool`. Supported fields: `category`, `partner`, `bucket`, `tag`. Supported ops: `is`, `not`, `contains`.
+- `RecipeRepository` (TOML-on-disk + state-in-DB), `SummaryService` (apply recipe to overlay rows for a month, group by currency, separate income / expense unless `net=true`).
+- CLI: `ledger recipe list|show|use|new` and `ledger summary [--recipe NAME] [--month YYYY-MM]` (defaults to active recipe + current month).
+- TUI: Recipes screen — j/k to navigate, `u` to set the focused recipe as active.
+
 ---
 
 ## ⏳ Next (priority order)
 
-1. **Recipes screen + summary command** — recipes table, summary command, Recipes TUI screen. ~2 days.
-2. **Rules engine + apply** — `rules` table, `RuleService.Apply()`, `ledger rule list|create|apply`. Categorizer screen ties in. ~3-4 days.
-3. **Transfer detection + Linker** — `TransferDetectionService`, `ledger transfers detect`, Linker TUI screen for manual linking. ~2-3 days.
-4. **Manager bulk actions** — `x` to toggle select, `:` for command line (cat/tag/hide/split/undo on the selection). ~half day.
+1. **Rules engine + apply** — `rules` table, `RuleService.Apply()`, `ledger rule list|create|apply`. Categorizer screen ties in. ~3-4 days.
+2. **Transfer detection + Linker** — `TransferDetectionService`, `ledger transfers detect`, Linker TUI screen for manual linking. ~2-3 days.
+3. **Manager bulk actions** — `x` to toggle select, `:` for command line (cat/tag/hide/split/undo on the selection). ~half day.
 
 This order is approximate — exact ordering depends on what the
 operator wants to drive daily. Buckets before rules because the Budget

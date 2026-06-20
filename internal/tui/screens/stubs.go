@@ -347,15 +347,107 @@ func formatMinor(minor int64, currency string) string {
 	return m.DecimalString() + " " + currency
 }
 
-type Recipes struct{}
+type Recipes struct {
+	deps       Deps
+	rows       []recipeRow
+	cursor     int
+	active     string
+	statusMsg  string
+}
+
+type recipeRow struct {
+	name        string
+	description string
+	net         bool
+}
 
 func NewRecipes() *Recipes { return &Recipes{} }
+
 func (r *Recipes) Title() string { return "Recipes" }
-func (r *Recipes) Init(ctx context.Context, deps Deps) tea.Cmd { return nil }
-func (r *Recipes) Update(msg tea.Msg) (Screen, tea.Cmd)        { return r, nil }
+
+func (r *Recipes) Init(ctx context.Context, deps Deps) tea.Cmd {
+	r.deps = deps
+	r.reload(ctx)
+	return nil
+}
+
+func (r *Recipes) reload(ctx context.Context) {
+	if r.deps.RecipeSvc == nil {
+		r.statusMsg = "recipe service not available"
+		return
+	}
+	all, err := r.deps.RecipeSvc.LoadAll(ctx)
+	if err != nil {
+		r.statusMsg = "load: " + err.Error()
+		return
+	}
+	active, _ := r.deps.RecipeSvc.GetActiveName(ctx)
+	r.active = active
+	r.rows = r.rows[:0]
+	for _, rec := range all {
+		r.rows = append(r.rows, recipeRow{
+			name:        rec.Name,
+			description: rec.Description,
+			net:         rec.Net,
+		})
+	}
+	if r.cursor >= len(r.rows) {
+		r.cursor = len(r.rows) - 1
+	}
+	if r.cursor < 0 {
+		r.cursor = 0
+	}
+	r.statusMsg = fmt.Sprintf("%d recipes · active: %s", len(r.rows), r.active)
+}
+
+func (r *Recipes) Update(msg tea.Msg) (Screen, tea.Cmd) {
+	ctx := context.Background()
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "j", "down":
+			if r.cursor < len(r.rows)-1 {
+				r.cursor++
+			}
+		case "k", "up":
+			if r.cursor > 0 {
+				r.cursor--
+			}
+		case "u":
+			if r.cursor < len(r.rows) && r.deps.RecipeSvc != nil {
+				if err := r.deps.RecipeSvc.SetActiveName(ctx, r.rows[r.cursor].name); err != nil {
+					r.statusMsg = "use: " + err.Error()
+				} else {
+					r.active = r.rows[r.cursor].name
+					r.statusMsg = "active recipe → " + r.active
+				}
+			}
+		}
+	}
+	return r, nil
+}
+
 func (r *Recipes) View() string {
-	return "  (recipes screen — list, edit, and pick active summary recipe)\n" +
-		"  feature ships in the recipes milestone\n"
+	if len(r.rows) == 0 {
+		return fmt.Sprintf("  (no recipes — drop a .toml in $LEDGER_RECIPES_DIR)\n  active: %s\n", r.active)
+	}
+	var b strings.Builder
+	b.WriteString("  NAME                            NET     DESCRIPTION\n")
+	for i, row := range r.rows {
+		marker := "  "
+		if row.name == r.active {
+			marker = "* "
+		}
+		if i == r.cursor {
+			marker = "> "
+		}
+		net := "no"
+		if row.net {
+			net = "yes"
+		}
+		fmt.Fprintf(&b, "%s%-30s  %-6s  %s\n", marker, row.name, net, row.description)
+	}
+	return b.String()
 }
 
 func annSvcFromDeps(d Deps) *services.AnnotationService {

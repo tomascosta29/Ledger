@@ -124,6 +124,7 @@ func (s *OverlayService) insertRawRows(ctx context.Context, tx *sql.Tx, refreshe
 				'raw', t.id, t.exclude_from_reports, ?
 			FROM transactions t
 			WHERE t.is_hidden = 0
+			  AND t.parent_transaction_id IS NULL
 			  AND NOT EXISTS (SELECT 1 FROM transactions c WHERE c.parent_transaction_id = t.id)
 			  AND NOT EXISTS (SELECT 1 FROM transaction_group_members m WHERE m.transaction_id = t.id)
 		`
@@ -141,6 +142,7 @@ func (s *OverlayService) insertRawRows(ctx context.Context, tx *sql.Tx, refreshe
 				'raw', t.id, t.exclude_from_reports, ?
 			FROM transactions t
 			WHERE t.is_hidden = 0
+			  AND t.parent_transaction_id IS NULL
 			  AND NOT EXISTS (SELECT 1 FROM transactions c WHERE c.parent_transaction_id = t.id)
 		`
 	}

@@ -552,6 +552,30 @@ func (s *AnnotationService) Undo(ctx context.Context) error {
 					return fmt.Errorf("restore bucket for txn %d: %w", entry.RecordID, err)
 				}
 
+			case entities.AuditActionSplit:
+				// NewValue is comma-separated child IDs created by the split.
+				// Undo deletes them; the parent automatically re-appears in the
+				// overlay on rebuild because it no longer has children.
+				if entry.NewValue == nil || *entry.NewValue == "" {
+					return fmt.Errorf("split audit row missing children list")
+				}
+				for _, part := range strings.Split(*entry.NewValue, ",") {
+					part = strings.TrimSpace(part)
+					if part == "" {
+						continue
+					}
+					childID, err := strconv.ParseInt(part, 10, 64)
+					if err != nil {
+						return fmt.Errorf("parse child id %q: %w", part, err)
+					}
+					if err := s.deps.TxRepo.DeleteDBTX(ctx, tx, childID); err != nil {
+						if errors.Is(err, ports.ErrNotFound) {
+							continue
+						}
+						return fmt.Errorf("delete split child %d: %w", childID, err)
+					}
+				}
+
 			case entities.AuditActionTag:
 				if err := s.deps.TagRepo.ClearDBTX(ctx, tx, entry.RecordID); err != nil {
 					return fmt.Errorf("clear tags for txn %d: %w", entry.RecordID, err)

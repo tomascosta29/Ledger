@@ -53,6 +53,7 @@ type TransactionRepository interface {
 	InsertBatch(ctx context.Context, txs []*entities.Transaction) (insertedIDs []int64, err error)
 	GetByID(ctx context.Context, id int64) (*entities.Transaction, error)
 	GetBySourceHash(ctx context.Context, hash string) (*entities.Transaction, error)
+	FindByParent(ctx context.Context, parentID int64) ([]*entities.Transaction, error)
 	FindAll(ctx context.Context, opts TxFindOptions) ([]*entities.Transaction, error)
 	UpdateFields(ctx context.Context, id int64, fields map[string]any) error
 	SetHidden(ctx context.Context, id int64, hidden bool) error

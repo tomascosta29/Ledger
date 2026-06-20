@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -49,6 +50,7 @@ func init() {
 	rootCmd.AddCommand(addCmd)
 	rootCmd.AddCommand(showCmd)
 	rootCmd.AddCommand(historyCmd)
+	rootCmd.AddCommand(splitCmd)
 	rootCmd.AddCommand(categorizeCmd)
 	rootCmd.AddCommand(hideCmd)
 	rootCmd.AddCommand(tagCmd)
@@ -59,7 +61,6 @@ func init() {
 	importCmd.Flags().BoolVar(&importDryRun, "dry-run", false, "parse and preview without writing to the DB")
 	listCmd.Flags().IntVar(&listLimit, "limit", 50, "max number of rows to show")
 	listCmd.Flags().StringVar(&listCategory, "category", "", "filter by category")
-	listCmd.Flags().BoolVar(&listIncludeHidden, "include-hidden", false, "include hidden transactions")
 	listCmd.Flags().StringVar(&listSince, "since", "", "filter rows effective on or after YYYY-MM-DD")
 }
 
@@ -274,6 +275,153 @@ func init() {
 	historyCmd.Flags().Int("limit", 50, "max number of rows to show")
 }
 
+var splitCmd = &cobra.Command{
+	Use:   "split <txID>",
+	Short: "Split a transaction into N children",
+	Long: `split breaks a transaction into N children whose amounts sum to the
+parent. The parent stays in the transactions table (it's the split
+header in the overlay) and each child becomes a split_child overlay row.
+Use 'ledger undo' to revert.
+
+Two modes:
+  - non-interactive: pass --child "amount|description" once per child
+  - interactive:    no --child flags; prompted line by line
+
+Example:
+  ledger split 42 --child "-20.00|Groceries" --child "-15.00|Household"`,
+	Args: cobra.ExactArgs(1),
+	RunE: runSplit,
+}
+
+func runSplit(cmd *cobra.Command, args []string) error {
+	ids, err := parseInt64List(args[0])
+	if err != nil {
+		return err
+	}
+	if len(ids) != 1 {
+		return fmt.Errorf("split takes a single transaction id")
+	}
+	childFlags, _ := cmd.Flags().GetStringSlice("child")
+
+	ctx := ctxFromCmd(cmd)
+	db, err := openDB(ctx)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	txRepo := persistence.NewTransactionRepository(db)
+
+	children := make([]commands.SplitChild, 0)
+	if len(childFlags) > 0 {
+		for i, raw := range childFlags {
+			amt, desc, err := parseChildSpec(raw)
+			if err != nil {
+				return fmt.Errorf("child %d: %w", i+1, err)
+			}
+			cur, err := txRepo.GetByID(ctx, ids[0])
+			if err != nil {
+				return err
+			}
+			children = append(children, commands.SplitChild{
+				AmountMinor: amt,
+				Currency:    cur.Amount.Currency,
+				Description: desc,
+			})
+		}
+	} else {
+		parent, err := txRepo.GetByID(ctx, ids[0])
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Splitting transaction %d (%s %s, %s)\n",
+			parent.ID, parent.Amount.String(), parent.EffectiveDate, parent.Description)
+		fmt.Println("Enter each child as 'amount|description' (e.g. -20.00|Groceries).")
+		fmt.Println("Empty line when done. Last child's amount is computed to match the parent.")
+		reader := bufio.NewReader(os.Stdin)
+		remain := parent.Amount.Amount
+		for {
+			fmt.Printf("  child [%s remaining] amount|description: ", formatMinorInt(remain, parent.Amount.Currency))
+			line, _ := reader.ReadString('\n')
+			line = strings.TrimSpace(line)
+			if line == "" {
+				break
+			}
+			amt, desc, err := parseChildSpec(line)
+			if err != nil {
+				fmt.Printf("  ! %v\n", err)
+				continue
+			}
+			if amt == 0 {
+				fmt.Println("  ! amount cannot be zero")
+				continue
+			}
+			if amt > remain && remain > 0 {
+				fmt.Printf("  ! amount exceeds remaining %s\n", formatMinorInt(remain, parent.Amount.Currency))
+				continue
+			}
+			if amt < remain && remain < 0 {
+				fmt.Printf("  ! amount below remaining %s (more negative)\n", formatMinorInt(remain, parent.Amount.Currency))
+				continue
+			}
+			children = append(children, commands.SplitChild{
+				AmountMinor: amt,
+				Currency:    parent.Amount.Currency,
+				Description: desc,
+			})
+			remain -= amt
+			if remain == 0 {
+				break
+			}
+		}
+	}
+
+	uc := commands.NewSplitUseCase(commands.SplitDeps{
+		TxRepo:     txRepo,
+		AuditRepo:  persistence.NewAuditLogRepository(db),
+		OverlaySvc: services.NewOverlayService(db.DB),
+	})
+	result, err := uc.Execute(ctx, commands.SplitOptions{
+		TransactionID: ids[0],
+		Children:      children,
+	})
+	if err != nil {
+		return err
+	}
+	idsStrs := make([]string, len(result.ChildrenIDs))
+	for i, id := range result.ChildrenIDs {
+		idsStrs[i] = fmt.Sprintf("%d", id)
+	}
+	fmt.Printf("✓ split %d into %d children: %s\n",
+		result.ParentID, len(result.ChildrenIDs), strings.Join(idsStrs, ", "))
+	return nil
+}
+
+func parseChildSpec(s string) (int64, string, error) {
+	parts := strings.SplitN(s, "|", 2)
+	if len(parts) != 2 || strings.TrimSpace(parts[1]) == "" {
+		return 0, "", fmt.Errorf("expected 'amount|description', got %q", s)
+	}
+	amountStr := strings.TrimSpace(parts[0])
+	desc := strings.TrimSpace(parts[1])
+	// Currency-agnostic parse: use EUR as the parser's currency, but we
+	// only need the minor amount. The actual currency comes from the parent.
+	money, err := valueobjects.ParseDecimal(amountStr, valueobjects.EUR)
+	if err != nil {
+		return 0, "", fmt.Errorf("amount %q: %w", amountStr, err)
+	}
+	return money.Amount, desc, nil
+}
+
+func formatMinorInt(minor int64, currency valueobjects.Currency) string {
+	m := valueobjects.MustNew(minor, currency)
+	return m.DecimalString() + " " + string(currency)
+}
+
+func init() {
+	splitCmd.Flags().StringSlice("child", nil, "child spec 'amount|description' (repeat for each child)")
+}
+
 var tuiCmd = &cobra.Command{
 	Use:   "tui",
 	Short: "Open the LedgerPro TUI (default if no subcommand given)",
@@ -420,10 +568,9 @@ hidden transactions are excluded. Filters: --category, --since, --include-hidden
 }
 
 var (
-	listLimit         int
-	listCategory      string
-	listIncludeHidden bool
-	listSince         string
+	listLimit    int
+	listCategory string
+	listSince    string
 )
 
 func runList(cmd *cobra.Command, args []string) error {
@@ -440,16 +587,13 @@ func runList(cmd *cobra.Command, args []string) error {
 
 	repo := persistence.NewOverlayRepository(db)
 	filters := ports.OverlayFilters{
-		SourceKinds: []ports.SourceKind{ports.SourceRaw, ports.SourceSplitChild, ports.SourceReimbursementGroup},
+		SourceKinds: []ports.SourceKind{ports.SourceRaw, ports.SourceSplitHeader, ports.SourceSplitChild, ports.SourceReimbursementGroup},
 	}
 	if listCategory != "" {
 		filters.Category = &listCategory
 	}
 	if listSince != "" {
 		filters.StartDate = &listSince
-	}
-	if listIncludeHidden {
-		filters.SourceKinds = append(filters.SourceKinds, ports.SourceSplitHeader)
 	}
 
 	rows, err := repo.FindAll(ctx, ports.OverlayFindOptions{

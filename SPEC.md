@@ -71,7 +71,7 @@ v2 or later. For status of what's already shipped, see
 | Manual `add`                                             | ✓      | CLI done; TUI modal ⏳                                               |
 | Buckets (per-bucket allocation, assigned to txns)       | ✓      | `--bucket` on categorize; `ledger bucket list|create|...`; `ledger budget [--month]` |
 | Bulk categorize / tag / hide                             | ✓      | Atomic across all ids; one undo reverts the whole batch; TUI screen ⏳ |
-| Splits (parent/child)                                    | ⏳      | Schema + overlay support ✓; CLI + TUI ⏳                            |
+| Splits (parent/child)                                    | ✓      | CLI ✓ (flag-driven + interactive); TUI screen ⏳                      |
 | Rules (category+bucket+tags, priority, no overwrite)    | ⏳      | Author via Categorizer or CLI                                       |
 | Reimbursement linker                                     | ⏳      | Persisted group, Linker screen                                      |
 | Transfer detection (heuristic, persisted groups)        | ⏳      | Interactive confirm, `ledger transfers detect`                       |
@@ -113,7 +113,6 @@ ledger tui                           # placeholder; full TUI ⏳
 ### ⏳ Next
 
 ```
-ledger split <txID>                  # split into N children
 ledger transfers detect              # heuristic transfer detection
 ledger reimburse link                # manual group linking
 ledger rule list|create|apply        # rules engine

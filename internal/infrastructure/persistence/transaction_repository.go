@@ -222,6 +222,23 @@ func (r *TransactionRepository) GetBySourceHash(ctx context.Context, hash string
 	return scanTransaction(row)
 }
 
+func (r *TransactionRepository) FindByParent(ctx context.Context, parentID int64) ([]*entities.Transaction, error) {
+	rows, err := r.db.QueryContext(ctx, selectAllColumnsSQL+" WHERE parent_transaction_id = ? ORDER BY id", parentID)
+	if err != nil {
+		return nil, fmt.Errorf("query children: %w", err)
+	}
+	defer rows.Close()
+	out := make([]*entities.Transaction, 0, 4)
+	for rows.Next() {
+		t, err := scanTransaction(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
 func (r *TransactionRepository) FindAll(ctx context.Context, opts ports.TxFindOptions) ([]*entities.Transaction, error) {
 	where, args := buildWhere(opts.Filters)
 	q := selectAllColumnsSQL + where

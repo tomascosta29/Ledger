@@ -82,6 +82,13 @@ decisions, see [docs/adr/](./docs/adr/).
 - `ledger show <txID>` — full transaction detail incl. tags and bucket.
 - `ledger history [--tx-id N] [--action A] [--limit N]` — audit log viewer.
 
+### Splits (CLI)
+- `commands.SplitUseCase` — splits a parent into N children whose amounts sum to the parent. Rejects re-splits, currency mismatches, and non-matching sums. Writes a single `split` audit row on the parent whose `NewValue` is the comma-separated child IDs.
+- Undo handler for `split` action: parses the child ID list, deletes them, rebuilds overlay. The parent automatically re-appears as a raw row in the overlay because it no longer has children.
+- Overlay rebuild now also excludes children from raw via `t.parent_transaction_id IS NULL` (the previous version only excluded parents that had children, which let children slip through as raw).
+- `ledger list` includes `SourceSplitHeader` by default so a split shows up as a header + N children.
+- `ledger split <txID> --child "amount|description"` (repeatable) for non-interactive, or no flags for interactive prompting.
+
 ---
 
 ## ⏳ Next (priority order)
@@ -92,8 +99,7 @@ decisions, see [docs/adr/](./docs/adr/).
 4. **Budget screen** — uses the buckets data. ~1-2 days.
 5. **Recipes screen** — list / author / pick active recipe. Plus CLI: `ledger recipe list|show|use`. ~1-2 days.
 6. **Rules engine + apply** — `rules` table, `RuleService.Apply()`, `ledger rule list|create|apply`. Categorizer screen ties in. ~3-4 days.
-7. **Splits** — CLI: `ledger split <id>` (interactive). TUI screen later. ~1-2 days for CLI.
-8. **Transfer detection** — `TransferDetectionService`, `ledger transfers detect`. Linker screen ties in. ~2-3 days.
+7. **Transfer detection** — `TransferDetectionService`, `ledger transfers detect`. Linker screen ties in. ~2-3 days.
 
 This order is approximate — exact ordering depends on what the
 operator wants to drive daily. Buckets before rules because the Budget

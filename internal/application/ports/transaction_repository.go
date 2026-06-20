@@ -2,9 +2,12 @@ package ports
 
 import (
 	"context"
+	"errors"
 
 	"github.com/tomascosta29/Ledger/internal/domain/entities"
 )
+
+var ErrNotFound = errors.New("not found")
 
 type SortField string
 

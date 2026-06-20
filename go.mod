@@ -3,6 +3,7 @@ module github.com/tomascosta29/Ledger
 go 1.25.11
 
 require (
+	github.com/BurntSushi/toml v1.6.0
 	github.com/pressly/goose/v3 v3.27.1
 	github.com/spf13/cobra v1.10.2
 	modernc.org/sqlite v1.52.0

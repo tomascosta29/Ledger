@@ -13,8 +13,6 @@ import (
 	"github.com/tomascosta29/Ledger/internal/domain/valueobjects"
 )
 
-var ErrNotFound = errors.New("not found")
-
 type TransactionRepository struct {
 	db *DB
 }
@@ -204,7 +202,7 @@ func (r *TransactionRepository) UpdateFields(ctx context.Context, id int64, fiel
 		return fmt.Errorf("rows affected: %w", err)
 	}
 	if n == 0 {
-		return ErrNotFound
+		return ports.ErrNotFound
 	}
 	return nil
 }
@@ -286,7 +284,7 @@ func scanTransaction(s scanner) (*entities.Transaction, error) {
 		&excludeFromRep, &isHidden, &createdAtStr, &updatedAtStr,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
+		return nil, ports.ErrNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("scan transaction: %w", err)

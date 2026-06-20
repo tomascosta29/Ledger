@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/tomascosta29/Ledger/internal/application/ports"
 	"github.com/tomascosta29/Ledger/internal/domain/entities"
 )
 
@@ -90,7 +91,7 @@ func scanBatch(s scanner) (*entities.ImportBatch, error) {
 	)
 	err := s.Scan(&b.ID, &b.SourceFile, &b.SourceProfile, &b.RowCount, &b.InsertedCount, &b.SkippedCount, &createdAt)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
+		return nil, ports.ErrNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("scan batch: %w", err)

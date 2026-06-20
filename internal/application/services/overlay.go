@@ -119,7 +119,8 @@ func (s *OverlayService) insertRawRows(ctx context.Context, tx *sql.Tx, refreshe
 			)
 			SELECT
 				t.effective_date, t.amount_minor, t.currency, t.description,
-				t.partner_name, t.partner_iban, t.category, '',
+				t.partner_name, t.partner_iban, t.category,
+				COALESCE((SELECT GROUP_CONCAT(tt.tag, ',') FROM transaction_tags tt WHERE tt.transaction_id = t.id), ''),
 				'raw', t.id, t.exclude_from_reports, ?
 			FROM transactions t
 			WHERE t.is_hidden = 0
@@ -135,7 +136,8 @@ func (s *OverlayService) insertRawRows(ctx context.Context, tx *sql.Tx, refreshe
 			)
 			SELECT
 				t.effective_date, t.amount_minor, t.currency, t.description,
-				t.partner_name, t.partner_iban, t.category, '',
+				t.partner_name, t.partner_iban, t.category,
+				COALESCE((SELECT GROUP_CONCAT(tt.tag, ',') FROM transaction_tags tt WHERE tt.transaction_id = t.id), ''),
 				'raw', t.id, t.exclude_from_reports, ?
 			FROM transactions t
 			WHERE t.is_hidden = 0
@@ -157,7 +159,8 @@ func (s *OverlayService) insertSplitChildren(ctx context.Context, tx *sql.Tx, re
 		)
 		SELECT
 			c.effective_date, c.amount_minor, c.currency, c.description,
-			c.partner_name, c.partner_iban, c.category, '',
+			c.partner_name, c.partner_iban, c.category,
+			COALESCE((SELECT GROUP_CONCAT(tt.tag, ',') FROM transaction_tags tt WHERE tt.transaction_id = c.id), ''),
 			h.id, 'split_child', c.id, ?
 		FROM transactions c
 		JOIN overlay_transactions h

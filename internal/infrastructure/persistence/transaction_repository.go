@@ -13,6 +13,8 @@ import (
 	"github.com/tomascosta29/Ledger/internal/domain/valueobjects"
 )
 
+var _ ports.DBTX = (*DB)(nil)
+
 type TransactionRepository struct {
 	db *DB
 }
@@ -306,6 +308,38 @@ func (r *TransactionRepository) SetExcludeFromReports(ctx context.Context, id in
 
 func (r *TransactionRepository) SetCategory(ctx context.Context, id int64, category string) error {
 	return r.UpdateFields(ctx, id, map[string]any{"category": category})
+}
+
+func (r *TransactionRepository) SetCategoryDBTX(ctx context.Context, db ports.DBTX, id int64, category string) error {
+	now := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
+	res, err := db.ExecContext(ctx,
+		`UPDATE transactions SET category = ?, updated_at = ? WHERE id = ?`,
+		category, now, id,
+	)
+	if err != nil {
+		return fmt.Errorf("set category: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ports.ErrNotFound
+	}
+	return nil
+}
+
+func (r *TransactionRepository) SetHiddenDBTX(ctx context.Context, db ports.DBTX, id int64, hidden bool) error {
+	now := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
+	res, err := db.ExecContext(ctx,
+		`UPDATE transactions SET is_hidden = ?, updated_at = ? WHERE id = ?`,
+		boolToInt(hidden), now, id,
+	)
+	if err != nil {
+		return fmt.Errorf("set hidden: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ports.ErrNotFound
+	}
+	return nil
 }
 
 func (r *TransactionRepository) Count(ctx context.Context, filters ports.TxFilters) (int64, error) {

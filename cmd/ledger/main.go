@@ -41,6 +41,9 @@ func init() {
 	rootCmd.AddCommand(importCmd)
 	rootCmd.AddCommand(listCmd)
 	rootCmd.AddCommand(rebuildOverlayCmd)
+	rootCmd.AddCommand(categorizeCmd)
+	rootCmd.AddCommand(hideCmd)
+	rootCmd.AddCommand(tagCmd)
 	importCmd.Flags().StringVarP(&importProfile, "profile", "p", "", "bank profile (erste, revolut, or custom TOML)")
 	importCmd.Flags().BoolVar(&importDryRun, "dry-run", false, "parse and preview without writing to the DB")
 	listCmd.Flags().IntVar(&listLimit, "limit", 50, "max number of rows to show")
@@ -302,4 +305,132 @@ func runRebuildOverlay(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Printf("✓ overlay rebuilt: %d rows\n", n)
 	return nil
+}
+
+var categorizeCmd = &cobra.Command{
+	Use:   "categorize <txID> --category NAME",
+	Short: "Set the category on a transaction",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runCategorize,
+}
+
+func runCategorize(cmd *cobra.Command, args []string) error {
+	txID, err := parseInt64(args[0])
+	if err != nil {
+		return err
+	}
+	category, _ := cmd.Flags().GetString("category")
+	if category == "" {
+		return fmt.Errorf("--category is required")
+	}
+	return runAnnotation(ctxFromCmd(cmd), func(svc *services.AnnotationService) error {
+		return svc.Categorize(ctxFromCmd(cmd), txID, category)
+	}, fmt.Sprintf("categorized transaction %d → %q", txID, category))
+}
+
+var hideCmd = &cobra.Command{
+	Use:   "hide <txID>",
+	Short: "Hide a transaction from queries (it stays in raw for audit)",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runHide,
+}
+
+var hideShow bool
+
+func runHide(cmd *cobra.Command, args []string) error {
+	txID, err := parseInt64(args[0])
+	if err != nil {
+		return err
+	}
+	hidden := true
+	if unhide, _ := cmd.Flags().GetBool("unhide"); unhide {
+		hidden = false
+	}
+	return runAnnotation(ctxFromCmd(cmd), func(svc *services.AnnotationService) error {
+		return svc.SetHidden(ctxFromCmd(cmd), txID, hidden)
+	}, fmt.Sprintf("%s transaction %d", ifElse(hidden, "hidden", "unhidden"), txID))
+}
+
+var tagCmd = &cobra.Command{
+	Use:   "tag <txID>",
+	Short: "Add or remove tags on a transaction",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runTag,
+}
+
+func runTag(cmd *cobra.Command, args []string) error {
+	txID, err := parseInt64(args[0])
+	if err != nil {
+		return err
+	}
+	add, _ := cmd.Flags().GetStringSlice("add")
+	remove, _ := cmd.Flags().GetStringSlice("remove")
+	if len(add) == 0 && len(remove) == 0 {
+		return fmt.Errorf("at least one of --add or --remove is required")
+	}
+	return runAnnotation(ctxFromCmd(cmd), func(svc *services.AnnotationService) error {
+		for _, t := range add {
+			if err := svc.AddTag(ctxFromCmd(cmd), txID, t); err != nil {
+				return fmt.Errorf("add %q: %w", t, err)
+			}
+		}
+		for _, t := range remove {
+			if err := svc.RemoveTag(ctxFromCmd(cmd), txID, t); err != nil {
+				return fmt.Errorf("remove %q: %w", t, err)
+			}
+		}
+		return nil
+	}, fmt.Sprintf("tagged transaction %d (+%v -%v)", txID, add, remove))
+}
+
+func init() {
+	categorizeCmd.Flags().StringP("category", "c", "", "category name (e.g. need, want, savings)")
+	hideCmd.Flags().Bool("unhide", false, "unhide instead of hiding")
+	tagCmd.Flags().StringSlice("add", nil, "tag(s) to add (comma-separated)")
+	tagCmd.Flags().StringSlice("remove", nil, "tag(s) to remove (comma-separated)")
+}
+
+func runAnnotation(ctx context.Context, fn func(*services.AnnotationService) error, successMsg string) error {
+	dbPath := persistence.DefaultDBPath()
+	db, err := persistence.Open(ctx, dbPath)
+	if err != nil {
+		return fmt.Errorf("open db: %w", err)
+	}
+	defer db.Close()
+
+	svc := services.NewAnnotationService(services.AnnotationDeps{
+		DB:         db.DB,
+		TxRepo:     persistence.NewTransactionRepository(db),
+		TagRepo:    persistence.NewTagRepository(db),
+		AuditRepo:  persistence.NewAuditLogRepository(db),
+		OverlaySvc: services.NewOverlayService(db.DB),
+	})
+	if err := fn(svc); err != nil {
+		return err
+	}
+	fmt.Printf("✓ %s\n", successMsg)
+	return nil
+}
+
+func ctxFromCmd(cmd *cobra.Command) context.Context {
+	if ctx := cmd.Context(); ctx != nil {
+		return ctx
+	}
+	return context.Background()
+}
+
+func parseInt64(s string) (int64, error) {
+	var n int64
+	_, err := fmtSscan(s, &n)
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("invalid transaction id: %q", s)
+	}
+	return n, nil
+}
+
+func ifElse[T any](cond bool, a, b T) T {
+	if cond {
+		return a
+	}
+	return b
 }

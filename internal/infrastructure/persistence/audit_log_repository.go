@@ -12,6 +12,8 @@ import (
 	"github.com/tomascosta29/Ledger/internal/domain/entities"
 )
 
+var _ ports.DBTX = (*DB)(nil)
+
 type AuditLogRepository struct {
 	db *DB
 }
@@ -21,7 +23,11 @@ func NewAuditLogRepository(db *DB) *AuditLogRepository {
 }
 
 func (r *AuditLogRepository) Append(ctx context.Context, entry *entities.AuditEntry) (int64, error) {
-	res, err := r.db.ExecContext(ctx, `
+	return r.AppendDBTX(ctx, r.db, entry)
+}
+
+func (r *AuditLogRepository) AppendDBTX(ctx context.Context, db ports.DBTX, entry *entities.AuditEntry) (int64, error) {
+	res, err := db.ExecContext(ctx, `
 		INSERT INTO audit_log (table_name, record_id, action, field, old_value, new_value, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
 	`,

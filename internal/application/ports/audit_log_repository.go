@@ -19,4 +19,5 @@ type AuditLogRepository interface {
 	AppendBatch(ctx context.Context, entries []*entities.AuditEntry) error
 	Query(ctx context.Context, filter AuditEntryFilter) ([]*entities.AuditEntry, error)
 	LastBatch(ctx context.Context, tableName string, recordID int64) ([]*entities.AuditEntry, error)
+	AppendDBTX(ctx context.Context, db DBTX, entry *entities.AuditEntry) (int64, error)
 }

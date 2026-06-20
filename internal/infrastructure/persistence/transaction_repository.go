@@ -122,7 +122,7 @@ func (r *TransactionRepository) InsertBatch(ctx context.Context, txs []*entities
 const selectAllColumnsSQL = `SELECT
 	id, effective_date, amount_minor, currency, description,
 	partner_name, partner_iban, import_batch_id, parent_transaction_id, source_hash,
-	raw_data, raw_description, category,
+	raw_data, raw_description, category, bucket_id,
 	exclude_from_reports, is_hidden, created_at, updated_at
 FROM transactions`
 
@@ -164,6 +164,7 @@ func scanTransaction(s scanner) (*entities.Transaction, error) {
 		rawData        []byte
 		rawDescription sql.NullString
 		category       string
+		bucketID       sql.NullInt64
 		excludeFromRep int
 		isHidden       int
 		createdAtStr   string
@@ -172,7 +173,7 @@ func scanTransaction(s scanner) (*entities.Transaction, error) {
 	err := s.Scan(
 		&id, &effDate, &amountMinor, &currencyStr, &description,
 		&partnerName, &partnerIBAN, &importBatchID, &parentTxnID, &sourceHash,
-		&rawData, &rawDescription, &category,
+		&rawData, &rawDescription, &category, &bucketID,
 		&excludeFromRep, &isHidden, &createdAtStr, &updatedAtStr,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -199,6 +200,7 @@ func scanTransaction(s scanner) (*entities.Transaction, error) {
 		RawData:            rawData,
 		RawDescription:     nullStringToPtr(rawDescription),
 		Category:           category,
+		BucketID:           nullInt64ToPtr(bucketID),
 		ExcludeFromReports: excludeFromRep != 0,
 		IsHidden:           isHidden != 0,
 		CreatedAt:          parseISO(createdAtStr),
@@ -322,6 +324,31 @@ func (r *TransactionRepository) SetCategoryDBTX(ctx context.Context, db ports.DB
 	)
 	if err != nil {
 		return fmt.Errorf("set category: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ports.ErrNotFound
+	}
+	return nil
+}
+
+func (r *TransactionRepository) SetBucket(ctx context.Context, id int64, bucketID int64) error {
+	bid := bucketID
+	return r.SetBucketDBTX(ctx, r.db, id, &bid)
+}
+
+func (r *TransactionRepository) SetBucketDBTX(ctx context.Context, db ports.DBTX, id int64, bucketID *int64) error {
+	now := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
+	var bucketArg any
+	if bucketID != nil {
+		bucketArg = *bucketID
+	}
+	res, err := db.ExecContext(ctx,
+		`UPDATE transactions SET bucket_id = ?, updated_at = ? WHERE id = ?`,
+		bucketArg, now, id,
+	)
+	if err != nil {
+		return fmt.Errorf("set bucket: %w", err)
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {

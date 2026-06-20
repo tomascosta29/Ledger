@@ -2,15 +2,19 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/tomascosta29/Ledger/internal/application/commands"
 	"github.com/tomascosta29/Ledger/internal/application/ports"
 	"github.com/tomascosta29/Ledger/internal/application/services"
+	"github.com/tomascosta29/Ledger/internal/domain/entities"
+	"github.com/tomascosta29/Ledger/internal/domain/valueobjects"
 	"github.com/tomascosta29/Ledger/internal/infrastructure/persistence"
 )
 
@@ -45,6 +49,8 @@ func init() {
 	rootCmd.AddCommand(hideCmd)
 	rootCmd.AddCommand(tagCmd)
 	rootCmd.AddCommand(undoCmd)
+	rootCmd.AddCommand(bucketCmd)
+	rootCmd.AddCommand(budgetCmd)
 	importCmd.Flags().StringVarP(&importProfile, "profile", "p", "", "bank profile (erste, revolut, or custom TOML)")
 	importCmd.Flags().BoolVar(&importDryRun, "dry-run", false, "parse and preview without writing to the DB")
 	listCmd.Flags().IntVar(&listLimit, "limit", 50, "max number of rows to show")
@@ -324,8 +330,12 @@ func runCategorize(cmd *cobra.Command, args []string) error {
 	if category == "" {
 		return fmt.Errorf("--category is required")
 	}
+	var bucket *string
+	if b, _ := cmd.Flags().GetString("bucket"); b != "" {
+		bucket = &b
+	}
 	return runAnnotation(ctxFromCmd(cmd), func(svc *services.AnnotationService) error {
-		return svc.BulkCategorize(ctxFromCmd(cmd), ids, category)
+		return svc.BulkCategorize(ctxFromCmd(cmd), ids, category, bucket)
 	}, fmt.Sprintf("categorized %d transaction(s) → %q (%s)", len(ids), category, joinIDs(ids)))
 }
 
@@ -386,6 +396,7 @@ func runTag(cmd *cobra.Command, args []string) error {
 
 func init() {
 	categorizeCmd.Flags().StringP("category", "c", "", "category name (e.g. need, want, savings)")
+	categorizeCmd.Flags().StringP("bucket", "b", "", "bucket name to assign (optional)")
 	hideCmd.Flags().Bool("unhide", false, "unhide instead of hiding")
 	tagCmd.Flags().StringSlice("add", nil, "tag(s) to add (comma-separated)")
 	tagCmd.Flags().StringSlice("remove", nil, "tag(s) to remove (comma-separated)")
@@ -403,6 +414,7 @@ func runAnnotation(ctx context.Context, fn func(*services.AnnotationService) err
 		DB:         db.DB,
 		TxRepo:     persistence.NewTransactionRepository(db),
 		TagRepo:    persistence.NewTagRepository(db),
+		BucketRepo: persistence.NewBucketRepository(db),
 		AuditRepo:  persistence.NewAuditLogRepository(db),
 		BatchRepo:  persistence.NewImportBatchRepository(db),
 		OverlaySvc: services.NewOverlayService(db.DB),
@@ -421,6 +433,286 @@ var undoCmd = &cobra.Command{
 	RunE:  runUndo,
 }
 
+var bucketCmd = &cobra.Command{
+	Use:   "bucket",
+	Short: "Manage buckets (budget envelopes)",
+}
+
+var (
+	bucketListArchived bool
+)
+
+func init() {
+	bucketCmd.AddCommand(bucketListCmd)
+	bucketCmd.AddCommand(bucketCreateCmd)
+	bucketCmd.AddCommand(bucketUpdateCmd)
+	bucketCmd.AddCommand(bucketArchiveCmd)
+	bucketCmd.AddCommand(bucketDeleteCmd)
+	bucketListCmd.Flags().BoolVar(&bucketListArchived, "all", false, "include archived buckets")
+	bucketCreateCmd.Flags().StringP("currency", "c", "", "currency (e.g. EUR)")
+	bucketCreateCmd.Flags().Float64P("allocation", "a", 0, "monthly allocation in major units (e.g. 500.00)")
+	bucketCreateCmd.MarkFlagRequired("currency")
+	bucketCreateCmd.MarkFlagRequired("allocation")
+	bucketUpdateCmd.Flags().StringP("name", "n", "", "new name")
+	bucketUpdateCmd.Flags().StringP("currency", "c", "", "new currency")
+	bucketUpdateCmd.Flags().Float64P("allocation", "a", 0, "new monthly allocation in major units")
+	budgetCmd.Flags().StringP("month", "m", "", "month (YYYY-MM); default is current month")
+}
+
+var bucketListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List buckets",
+	Args:  cobra.NoArgs,
+	RunE:  runBucketList,
+}
+
+func runBucketList(cmd *cobra.Command, args []string) error {
+	ctx := ctxFromCmd(cmd)
+	db, err := openDB(ctx)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	repo := persistence.NewBucketRepository(db)
+	buckets, err := repo.List(ctx, bucketListArchived)
+	if err != nil {
+		return err
+	}
+	if len(buckets) == 0 {
+		fmt.Println("no buckets")
+		return nil
+	}
+	fmt.Printf("%-6s  %-22s  %-8s  %14s  %s\n", "ID", "NAME", "CURRENCY", "ALLOCATION", "STATUS")
+	for _, b := range buckets {
+		status := "active"
+		if b.ArchivedAt != nil {
+			status = fmt.Sprintf("archived %s", b.ArchivedAt.Format("2006-01-02"))
+		}
+		cur := valueobjects.Currency(b.Currency)
+		alloc, _ := valueobjects.New(b.MonthlyAllocationMinor, cur)
+		fmt.Printf("%-6d  %-22s  %-8s  %14s  %s\n",
+			b.ID, b.Name, b.Currency, alloc.DecimalString(), status)
+	}
+	return nil
+}
+
+var bucketCreateCmd = &cobra.Command{
+	Use:   "create <name>",
+	Short: "Create a bucket",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runBucketCreate,
+}
+
+func runBucketCreate(cmd *cobra.Command, args []string) error {
+	ctx := ctxFromCmd(cmd)
+	name := args[0]
+	currency, _ := cmd.Flags().GetString("currency")
+	allocation, _ := cmd.Flags().GetFloat64("allocation")
+	if currency == "" || allocation == 0 {
+		return fmt.Errorf("--currency and --allocation are required")
+	}
+	cur := valueobjects.Currency(currency)
+	money, err := valueobjects.ParseDecimal(fmt.Sprintf("%.2f", allocation), cur)
+	if err != nil {
+		return fmt.Errorf("allocation: %w", err)
+	}
+	db, err := openDB(ctx)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	repo := persistence.NewBucketRepository(db)
+	id, err := repo.Create(ctx, &entities.Bucket{
+		Name:                   name,
+		Currency:               currency,
+		MonthlyAllocationMinor: money.Amount,
+	})
+	if err != nil {
+		return err
+	}
+	fmt.Printf("✓ bucket %d created: %s (%s, %s / month)\n", id, name, currency, money.DecimalString())
+	return nil
+}
+
+var bucketUpdateCmd = &cobra.Command{
+	Use:   "update <name>",
+	Short: "Update a bucket's name, currency, or allocation",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runBucketUpdate,
+}
+
+func runBucketUpdate(cmd *cobra.Command, args []string) error {
+	ctx := ctxFromCmd(cmd)
+	name := args[0]
+	db, err := openDB(ctx)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	repo := persistence.NewBucketRepository(db)
+	b, err := repo.GetByName(ctx, name)
+	if err != nil {
+		if errors.Is(err, ports.ErrNotFound) {
+			return fmt.Errorf("bucket %q not found", name)
+		}
+		return err
+	}
+	if newName, _ := cmd.Flags().GetString("name"); newName != "" {
+		b.Name = newName
+	}
+	if newCur, _ := cmd.Flags().GetString("currency"); newCur != "" {
+		b.Currency = newCur
+	}
+	if newAlloc, _ := cmd.Flags().GetFloat64("allocation"); newAlloc != 0 {
+		cur := valueobjects.Currency(b.Currency)
+		money, err := valueobjects.ParseDecimal(fmt.Sprintf("%.2f", newAlloc), cur)
+		if err != nil {
+			return fmt.Errorf("allocation: %w", err)
+		}
+		b.MonthlyAllocationMinor = money.Amount
+	}
+	if err := repo.Update(ctx, b); err != nil {
+		return err
+	}
+	fmt.Printf("✓ bucket %q updated\n", b.Name)
+	return nil
+}
+
+var bucketArchiveCmd = &cobra.Command{
+	Use:   "archive <name>",
+	Short: "Archive a bucket (no longer appears in budget; data is preserved)",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runBucketArchive,
+}
+
+func runBucketArchive(cmd *cobra.Command, args []string) error {
+	ctx := ctxFromCmd(cmd)
+	name := args[0]
+	db, err := openDB(ctx)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	repo := persistence.NewBucketRepository(db)
+	b, err := repo.GetByName(ctx, name)
+	if err != nil {
+		if errors.Is(err, ports.ErrNotFound) {
+			return fmt.Errorf("bucket %q not found", name)
+		}
+		return err
+	}
+	if err := repo.Archive(ctx, b.ID); err != nil {
+		return err
+	}
+	fmt.Printf("✓ bucket %q archived\n", name)
+	return nil
+}
+
+var bucketDeleteCmd = &cobra.Command{
+	Use:   "delete <name>",
+	Short: "Delete a bucket (only if no transactions are assigned)",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runBucketDelete,
+}
+
+func runBucketDelete(cmd *cobra.Command, args []string) error {
+	ctx := ctxFromCmd(cmd)
+	name := args[0]
+	db, err := openDB(ctx)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	repo := persistence.NewBucketRepository(db)
+	b, err := repo.GetByName(ctx, name)
+	if err != nil {
+		if errors.Is(err, ports.ErrNotFound) {
+			return fmt.Errorf("bucket %q not found", name)
+		}
+		return err
+	}
+	if err := repo.Delete(ctx, b.ID); err != nil {
+		return err
+	}
+	fmt.Printf("✓ bucket %q deleted\n", name)
+	return nil
+}
+
+var budgetCmd = &cobra.Command{
+	Use:   "budget [--month YYYY-MM]",
+	Short: "Show per-bucket allocation vs spend for a month",
+	Long: `budget prints each active bucket with its monthly allocation, the total
+spent against it in the given month, and the remaining headroom. Defaults
+to the current month. Unassigned spend (no bucket) is summarised at the
+end.`,
+	Args: cobra.NoArgs,
+	RunE: runBudget,
+}
+
+func runBudget(cmd *cobra.Command, args []string) error {
+	ctx := ctxFromCmd(cmd)
+	month, _ := cmd.Flags().GetString("month")
+	if month == "" {
+		month = time.Now().UTC().Format("2006-01")
+	}
+	db, err := openDB(ctx)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	repo := persistence.NewBucketRepository(db)
+	spends, err := repo.SpendByMonth(ctx, month)
+	if err != nil {
+		return err
+	}
+	unassigned, err := repo.UnassignedSpendByMonth(ctx, month)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("Budget for %s\n\n", month)
+	fmt.Printf("  %-22s  %12s  %12s  %12s  %s\n", "BUCKET", "ALLOCATED", "SPENT", "REMAINING", "TX")
+	for _, s := range spends {
+		remaining := s.AllocatedMinor - s.SpentMinor
+		fmt.Printf("  %-22s  %12s  %12s  %12s  %d\n",
+			s.BucketName,
+			formatMinor(s.AllocatedMinor, s.Currency),
+			formatMinor(s.SpentMinor, s.Currency),
+			formatMinor(remaining, s.Currency),
+			s.Count,
+		)
+	}
+	if len(unassigned) > 0 {
+		fmt.Println("\n  Unassigned:")
+		for _, s := range unassigned {
+			fmt.Printf("    %-20s  %12s  %d tx\n",
+				s.Currency,
+				formatMinor(s.SpentMinor, s.Currency),
+				s.Count,
+			)
+		}
+	}
+	return nil
+}
+
+func openDB(ctx context.Context) (*persistence.DB, error) {
+	dbPath := persistence.DefaultDBPath()
+	db, err := persistence.Open(ctx, dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("open db: %w", err)
+	}
+	return db, nil
+}
+
+func formatMinor(minor int64, currency string) string {
+	cur := valueobjects.Currency(currency)
+	m, err := valueobjects.New(minor, cur)
+	if err != nil {
+		return fmt.Sprintf("%d %s", minor, currency)
+	}
+	return m.DecimalString() + " " + currency
+}
+
 func runUndo(cmd *cobra.Command, args []string) error {
 	ctx := ctxFromCmd(cmd)
 	dbPath := persistence.DefaultDBPath()
@@ -434,6 +726,7 @@ func runUndo(cmd *cobra.Command, args []string) error {
 		DB:         db.DB,
 		TxRepo:     persistence.NewTransactionRepository(db),
 		TagRepo:    persistence.NewTagRepository(db),
+		BucketRepo: persistence.NewBucketRepository(db),
 		AuditRepo:  persistence.NewAuditLogRepository(db),
 		BatchRepo:  persistence.NewImportBatchRepository(db),
 		OverlaySvc: services.NewOverlayService(db.DB),

@@ -68,20 +68,28 @@ decisions, see [docs/adr/](./docs/adr/).
 - CLI: `ledger categorize 1,2,3 --category want`, `ledger hide 1,2,3`, `ledger tag 1,2,3 --add foo --remove bar`. Single-id syntax still works (one entry is just a one-element batch).
 - Atomic across all ids: a missing id rolls the whole batch back. `ledger undo` reverts every id in the batch in one step.
 
+### Buckets
+- Migration `00006_buckets.sql`: `buckets` table (name, currency, monthly_allocation_minor, archived_at) + `transactions.bucket_id` FK.
+- `BucketRepository` (CRUD, archive, delete-with-assignment-check, `SpendByMonth`, `UnassignedSpendByMonth`).
+- `AnnotationService.Categorize` / `BulkCategorize` accept an optional `*string` bucket name. If non-nil, the transaction is also assigned to the bucket; both writes share a single audit timestamp and a single overlay rebuild.
+- Currency mismatch between bucket and transaction is rejected (a single bulk operation rejects if the selection spans multiple currencies).
+- `AuditActionBucket = "bucket_assign"` — Undo handles it by restoring the prior bucket_id.
+- CLI: `ledger bucket list|create|update|archive|delete` and `ledger budget [--month YYYY-MM]`.
+
 ---
 
 ## ⏳ Next (priority order)
 
-1. **Buckets + Budget screen** — `buckets` table, `BucketService`, `Categorize` picks up a `--bucket` flag. The Budget TUI screen (per-bucket allocated vs spent). 2-3 days.
-2. **TUI shell** — Bubble Tea router model, status bar, vim-style keybindings. Proves the pattern before building 5 screens. ~1-2 days.
-3. **Manager screen** — transaction list with filter DSL (`desc:`, `partner:`, `iban:`, `min:`, `max:`, `sign:`). Reads from overlay. ~1-2 days.
-4. **Categorizer screen** — unknown-transactions list, bulk categorize, rule-create from focused tx. ~1-2 days.
-5. **Linker screen** — expense + reimbursement panes, link into persisted group. ~2 days.
-6. **Budget screen** — uses the buckets data. ~1-2 days.
-7. **Recipes screen** — list / author / pick active recipe. Plus CLI: `ledger recipe list|show|use`. ~1-2 days.
-8. **Rules engine + apply** — `rules` table, `RuleService.Apply()`, `ledger rule list|create|apply`. Categorizer screen ties in. ~3-4 days.
-9. **Splits** — CLI: `ledger split <id>` (interactive). TUI screen later. ~1-2 days for CLI.
-10. **Transfer detection** — `TransferDetectionService`, `ledger transfers detect`. Linker screen ties in. ~2-3 days.
+1. **TUI shell** — Bubble Tea router model, status bar, vim-style keybindings. Proves the pattern before building 5 screens. ~1-2 days.
+2. **Manager screen** — transaction list with filter DSL (`desc:`, `partner:`, `iban:`, `min:`, `max:`, `sign:`). Reads from overlay. ~1-2 days.
+3. **Categorizer screen** — unknown-transactions list, bulk categorize, rule-create from focused tx. ~1-2 days.
+4. **Budget screen** — uses the buckets data. ~1-2 days.
+5. **Recipes screen** — list / author / pick active recipe. Plus CLI: `ledger recipe list|show|use`. ~1-2 days.
+6. **Rules engine + apply** — `rules` table, `RuleService.Apply()`, `ledger rule list|create|apply`. Categorizer screen ties in. ~3-4 days.
+7. **Splits** — CLI: `ledger split <id>` (interactive). TUI screen later. ~1-2 days for CLI.
+8. **Transfer detection** — `TransferDetectionService`, `ledger transfers detect`. Linker screen ties in. ~2-3 days.
+9. **Manual `add`** — CLI subcommand + TUI modal. ~half day.
+10. **Show + History** — small CLI commands for transaction detail and audit log viewer. ~half day combined.
 
 This order is approximate — exact ordering depends on what the
 operator wants to drive daily. Buckets before rules because the Budget

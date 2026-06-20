@@ -62,6 +62,7 @@ type TransactionRepository interface {
 
 	SetCategoryDBTX(ctx context.Context, db DBTX, id int64, category string) error
 	SetHiddenDBTX(ctx context.Context, db DBTX, id int64, hidden bool) error
+	SetBucketDBTX(ctx context.Context, db DBTX, id int64, bucketID *int64) error
 	GetByIDDBTX(ctx context.Context, db DBTX, id int64) (*entities.Transaction, error)
 	Delete(ctx context.Context, id int64) error
 	DeleteDBTX(ctx context.Context, db DBTX, id int64) error

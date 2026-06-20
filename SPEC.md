@@ -69,13 +69,14 @@ v2 or later. For status of what's already shipped, see
 | -------------------------------------------------------- | ------ | -------------------------------------------------------------------- |
 | CSV import (Erste + Revolut)                             | ✓      | `ledger import <file> --profile NAME [--dry-run]`                    |
 | Manual `add`                                             | ⏳      | CLI subcommand + TUI modal                                           |
+| Buckets (per-bucket allocation, assigned to txns)       | ✓      | `--bucket` on categorize; `ledger bucket list|create|...`; `ledger budget [--month]` |
 | Bulk categorize / tag / hide                             | ✓      | Atomic across all ids; one undo reverts the whole batch; TUI screen ⏳ |
 | Splits (parent/child)                                    | ⏳      | Schema + overlay support ✓; CLI + TUI ⏳                            |
 | Rules (category+bucket+tags, priority, no overwrite)    | ⏳      | Author via Categorizer or CLI                                       |
 | Reimbursement linker                                     | ⏳      | Persisted group, Linker screen                                      |
 | Transfer detection (heuristic, persisted groups)        | ⏳      | Interactive confirm, `ledger transfers detect`                       |
 | Summary recipes (include/exclude/amortize/net, TOML)    | ⏳      | Recipes screen + CLI flag                                            |
-| Budget (per-bucket allocation, spent vs allocated)       | ⏳      | Budget screen; needs buckets table first                            |
+| Budget (per-bucket allocation, spent vs allocated)       | ✓      | `ledger budget [--month]`; Budget TUI screen ⏳                      |
 | Undo (reverse-last-batch, atomic)                        | ✓      | Audit log captures every change; one method to write                |
 | History (audit log viewer)                               | ⏳      | `ledger history` command                                            |
 | Multi-currency grouping                                  | ✓      | No FX, no config                                                     |
@@ -97,10 +98,12 @@ ledger init                          # create DB + run migrations
 ledger import <file> --profile NAME  # CSV ingest (Erste, Revolut, custom TOML)
 ledger list [--limit N] [--category X] [--since YYYY-MM-DD]
 ledger rebuild-overlay               # full overlay rebuild (drift recovery)
-ledger categorize <id1,id2,...> --category X
+ledger categorize <id1,id2,...> --category X [--bucket NAME]
 ledger hide <id1,id2,...> [--unhide]
 ledger tag <id1,id2,...> --add foo,bar [--remove baz]
 ledger undo                          # reverse last batch
+ledger bucket list|create|update|archive|delete
+ledger budget [--month YYYY-MM]      # per-bucket allocation vs spend
 ledger tui                           # placeholder; full TUI ⏳
 ```
 
@@ -115,7 +118,6 @@ ledger transfers detect              # heuristic transfer detection
 ledger reimburse link                # manual group linking
 ledger rule list|create|apply        # rules engine
 ledger summary [--recipe R] [--month YYYY-MM]
-ledger budget [--month YYYY-MM]
 ledger recipe list|show|use          # summary recipes
 ```
 

@@ -19,6 +19,7 @@ const (
 	AuditActionVisibility        = "visibility"
 	AuditActionCategorize        = "categorize"
 	AuditActionTag               = "tag"
+	AuditActionBucket            = "bucket_assign"
 	AuditActionSplit             = "split"
 	AuditActionTransferLink      = "transfer_linked"
 	AuditActionReimbursementLink = "reimbursement_linked"

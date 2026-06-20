@@ -2,6 +2,7 @@ package persistence_test
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -356,5 +357,143 @@ func TestInitIdempotent(t *testing.T) {
 	defer db2.Close()
 	if err := persistence.Migrate(db2.DB); err != nil {
 		t.Fatalf("second migrate (idempotent check): %v", err)
+	}
+}
+
+func TestBucketCRUD(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	repo := persistence.NewBucketRepository(db)
+
+	id, err := repo.Create(ctx, &entities.Bucket{
+		Name: "vacation-2026", Currency: "EUR", MonthlyAllocationMinor: 50000,
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	got, err := repo.GetByID(ctx, id)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.Name != "vacation-2026" || got.Currency != "EUR" || got.MonthlyAllocationMinor != 50000 {
+		t.Fatalf("bucket wrong: %+v", got)
+	}
+
+	byName, err := repo.GetByName(ctx, "vacation-2026")
+	if err != nil {
+		t.Fatalf("get by name: %v", err)
+	}
+	if byName.ID != id {
+		t.Fatalf("get by name returned wrong id")
+	}
+
+	all, err := repo.List(ctx, false)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(all) != 1 {
+		t.Fatalf("expected 1, got %d", len(all))
+	}
+
+	if err := repo.Archive(ctx, id); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+	active, _ := repo.List(ctx, false)
+	if len(active) != 0 {
+		t.Fatalf("expected 0 active after archive, got %d", len(active))
+	}
+	allIncluding, _ := repo.List(ctx, true)
+	if len(allIncluding) != 1 {
+		t.Fatalf("expected 1 including archived, got %d", len(allIncluding))
+	}
+}
+
+func TestBucketDeleteBlockedByAssignment(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	bucketRepo := persistence.NewBucketRepository(db)
+	txRepo := persistence.NewTransactionRepository(db)
+
+	bucketID, err := bucketRepo.Create(ctx, &entities.Bucket{
+		Name: "rent", Currency: "EUR", MonthlyAllocationMinor: 80000,
+	})
+	if err != nil {
+		t.Fatalf("create bucket: %v", err)
+	}
+
+	txID, err := txRepo.Insert(ctx, &entities.Transaction{
+		EffectiveDate: "2026-06-20",
+		Amount:        valueobjects.MustNew(-150000, valueobjects.EUR),
+		Description:   "rent",
+		SourceHash:    "h",
+		Category:      "Unknown",
+		CreatedAt:     time.Now().UTC(),
+		UpdatedAt:     time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("insert tx: %v", err)
+	}
+	if err := txRepo.SetBucket(ctx, txID, bucketID); err != nil {
+		t.Fatalf("assign bucket: %v", err)
+	}
+
+	if err := bucketRepo.Delete(ctx, bucketID); err == nil {
+		t.Fatal("expected delete to fail with assigned transaction")
+	}
+	if err := bucketRepo.Archive(ctx, bucketID); err != nil {
+		t.Fatalf("archive should still work: %v", err)
+	}
+}
+
+func TestBucketSpendByMonth(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	bucketRepo := persistence.NewBucketRepository(db)
+	txRepo := persistence.NewTransactionRepository(db)
+
+	bucketID, _ := bucketRepo.Create(ctx, &entities.Bucket{
+		Name: "groceries", Currency: "EUR", MonthlyAllocationMinor: 30000,
+	})
+
+	for i, amount := range []int64{-4200, -1500, -8000} {
+		txID, err := txRepo.Insert(ctx, &entities.Transaction{
+			EffectiveDate: fmt.Sprintf("2026-06-%02d", 10+i),
+			Amount:        valueobjects.MustNew(amount, valueobjects.EUR),
+			Description:   fmt.Sprintf("tx %d", i),
+			SourceHash:    fmt.Sprintf("h%d", i),
+			Category:      "Unknown",
+			CreatedAt:     time.Now().UTC(),
+			UpdatedAt:     time.Now().UTC(),
+		})
+		if err != nil {
+			t.Fatalf("insert %d: %v", i, err)
+		}
+		if err := txRepo.SetBucket(ctx, txID, bucketID); err != nil {
+			t.Fatalf("assign %d: %v", i, err)
+		}
+	}
+	_ = txRepo
+
+	spends, err := bucketRepo.SpendByMonth(ctx, "2026-06")
+	if err != nil {
+		t.Fatalf("spend: %v", err)
+	}
+	if len(spends) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(spends))
+	}
+	if spends[0].SpentMinor != 13700 {
+		t.Fatalf("spent = %d, want 13700", spends[0].SpentMinor)
+	}
+	if spends[0].Count != 3 {
+		t.Fatalf("count = %d, want 3", spends[0].Count)
+	}
+
+	unassigned, err := bucketRepo.UnassignedSpendByMonth(ctx, "2026-06")
+	if err != nil {
+		t.Fatalf("unassigned: %v", err)
+	}
+	if len(unassigned) != 0 {
+		t.Fatalf("expected 0 unassigned, got %d", len(unassigned))
 	}
 }

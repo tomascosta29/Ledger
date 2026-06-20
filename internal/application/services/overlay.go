@@ -114,12 +114,12 @@ func (s *OverlayService) insertRawRows(ctx context.Context, tx *sql.Tx, refreshe
 		q = `
 			INSERT INTO overlay_transactions (
 				effective_date, amount_minor, currency, description,
-				partner_name, partner_iban, category, tags,
+				partner_name, partner_iban, category, bucket_id, tags,
 				source_kind, raw_transaction_id, exclude_from_reports, refreshed_at
 			)
 			SELECT
 				t.effective_date, t.amount_minor, t.currency, t.description,
-				t.partner_name, t.partner_iban, t.category,
+				t.partner_name, t.partner_iban, t.category, t.bucket_id,
 				COALESCE((SELECT GROUP_CONCAT(tt.tag, ',') FROM transaction_tags tt WHERE tt.transaction_id = t.id), ''),
 				'raw', t.id, t.exclude_from_reports, ?
 			FROM transactions t
@@ -131,12 +131,12 @@ func (s *OverlayService) insertRawRows(ctx context.Context, tx *sql.Tx, refreshe
 		q = `
 			INSERT INTO overlay_transactions (
 				effective_date, amount_minor, currency, description,
-				partner_name, partner_iban, category, tags,
+				partner_name, partner_iban, category, bucket_id, tags,
 				source_kind, raw_transaction_id, exclude_from_reports, refreshed_at
 			)
 			SELECT
 				t.effective_date, t.amount_minor, t.currency, t.description,
-				t.partner_name, t.partner_iban, t.category,
+				t.partner_name, t.partner_iban, t.category, t.bucket_id,
 				COALESCE((SELECT GROUP_CONCAT(tt.tag, ',') FROM transaction_tags tt WHERE tt.transaction_id = t.id), ''),
 				'raw', t.id, t.exclude_from_reports, ?
 			FROM transactions t
@@ -154,12 +154,12 @@ func (s *OverlayService) insertSplitChildren(ctx context.Context, tx *sql.Tx, re
 	_, err := tx.ExecContext(ctx, `
 		INSERT INTO overlay_transactions (
 			effective_date, amount_minor, currency, description,
-			partner_name, partner_iban, category, tags,
+			partner_name, partner_iban, category, bucket_id, tags,
 			parent_overlay_id, source_kind, raw_transaction_id, refreshed_at
 		)
 		SELECT
 			c.effective_date, c.amount_minor, c.currency, c.description,
-			c.partner_name, c.partner_iban, c.category,
+			c.partner_name, c.partner_iban, c.category, c.bucket_id,
 			COALESCE((SELECT GROUP_CONCAT(tt.tag, ',') FROM transaction_tags tt WHERE tt.transaction_id = c.id), ''),
 			h.id, 'split_child', c.id, ?
 		FROM transactions c
@@ -211,7 +211,7 @@ func (s *OverlayService) insertGroupRows(ctx context.Context, tx *sql.Tx, refres
 	_, err := tx.ExecContext(ctx, `
 		INSERT INTO overlay_transactions (
 			effective_date, amount_minor, currency, description,
-			partner_name, partner_iban, category, tags,
+			partner_name, partner_iban, category, bucket_id, tags,
 			group_id, group_role, source_kind, raw_transaction_ids, exclude_from_reports, refreshed_at
 		)
 		SELECT
@@ -222,6 +222,7 @@ func (s *OverlayService) insertGroupRows(ctx context.Context, tx *sql.Tx, refres
 			NULL,
 			NULL,
 			'Unassigned',
+			NULL,
 			'',
 			g.id,
 			g.type,

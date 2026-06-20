@@ -15,15 +15,16 @@ import (
 )
 
 type annotationTestEnv struct {
-	db        *persistence.DB
-	annSvc    *services.AnnotationService
-	txRepo    *persistence.TransactionRepository
-	tagRepo   *persistence.TagRepository
-	auditRepo *persistence.AuditLogRepository
-	batchRepo *persistence.ImportBatchRepository
-	ovSvc     *services.OverlayService
-	ovRepo    *persistence.OverlayRepository
-	cleanup   func()
+	db         *persistence.DB
+	annSvc     *services.AnnotationService
+	txRepo     *persistence.TransactionRepository
+	tagRepo    *persistence.TagRepository
+	bucketRepo *persistence.BucketRepository
+	auditRepo  *persistence.AuditLogRepository
+	batchRepo  *persistence.ImportBatchRepository
+	ovSvc      *services.OverlayService
+	ovRepo     *persistence.OverlayRepository
+	cleanup    func()
 }
 
 func newAnnotationTestEnv(t *testing.T) *annotationTestEnv {
@@ -37,6 +38,7 @@ func newAnnotationTestEnv(t *testing.T) *annotationTestEnv {
 	}
 	txRepo := persistence.NewTransactionRepository(db)
 	tagRepo := persistence.NewTagRepository(db)
+	bucketRepo := persistence.NewBucketRepository(db)
 	auditRepo := persistence.NewAuditLogRepository(db)
 	batchRepo := persistence.NewImportBatchRepository(db)
 	ovSvc := services.NewOverlayService(db.DB)
@@ -52,21 +54,23 @@ func newAnnotationTestEnv(t *testing.T) *annotationTestEnv {
 		DB:         db.DB,
 		TxRepo:     txRepo,
 		TagRepo:    tagRepo,
+		BucketRepo: bucketRepo,
 		AuditRepo:  auditRepo,
 		BatchRepo:  batchRepo,
 		OverlaySvc: ovSvc,
 		Now:        nowFunc,
 	})
 	return &annotationTestEnv{
-		db:        db,
-		annSvc:    annSvc,
-		txRepo:    txRepo,
-		tagRepo:   tagRepo,
-		auditRepo: auditRepo,
-		batchRepo: batchRepo,
-		ovSvc:     ovSvc,
-		ovRepo:    ovRepo,
-		cleanup:   func() { _ = db.Close() },
+		db:         db,
+		annSvc:     annSvc,
+		txRepo:     txRepo,
+		tagRepo:    tagRepo,
+		bucketRepo: bucketRepo,
+		auditRepo:  auditRepo,
+		batchRepo:  batchRepo,
+		ovSvc:      ovSvc,
+		ovRepo:     ovRepo,
+		cleanup:    func() { _ = db.Close() },
 	}
 }
 
@@ -95,7 +99,7 @@ func TestAnnotateCategorizeWritesAndRebuilds(t *testing.T) {
 	defer env.cleanup()
 	id := env.seedTx(t)
 
-	if err := env.annSvc.Categorize(context.Background(), id, "want"); err != nil {
+	if err := env.annSvc.Categorize(context.Background(), id, "want", nil); err != nil {
 		t.Fatalf("categorize: %v", err)
 	}
 
@@ -234,7 +238,7 @@ func TestAnnotateCategorizeRollsBackOnAuditFailure(t *testing.T) {
 	// Inject a fault: close DB so audit INSERT fails
 	_ = env.db.Close()
 
-	err := env.annSvc.Categorize(context.Background(), id, "want")
+	err := env.annSvc.Categorize(context.Background(), id, "want", nil)
 	if err == nil {
 		t.Fatal("expected error after DB closed")
 	}
@@ -253,7 +257,7 @@ func TestUndo(t *testing.T) {
 		id := env.seedTx(t)
 
 		// Set category to "want" (originally default is "Unknown")
-		if err := env.annSvc.Categorize(context.Background(), id, "want"); err != nil {
+		if err := env.annSvc.Categorize(context.Background(), id, "want", nil); err != nil {
 			t.Fatalf("categorize: %v", err)
 		}
 
@@ -351,7 +355,7 @@ func TestUndo(t *testing.T) {
 		id := env.seedTx(t)
 
 		// 1. Categorize "want"
-		if err := env.annSvc.Categorize(context.Background(), id, "want"); err != nil {
+		if err := env.annSvc.Categorize(context.Background(), id, "want", nil); err != nil {
 			t.Fatalf("categorize: %v", err)
 		}
 		// 2. Hide
@@ -499,7 +503,7 @@ func TestBulkCategorize(t *testing.T) {
 		id2 := env.seedTx(t)
 		id3 := env.seedTx(t)
 
-		if err := env.annSvc.BulkCategorize(context.Background(), []int64{id1, id2, id3}, "want"); err != nil {
+		if err := env.annSvc.BulkCategorize(context.Background(), []int64{id1, id2, id3}, "want", nil); err != nil {
 			t.Fatalf("bulk categorize: %v", err)
 		}
 
@@ -540,7 +544,7 @@ func TestBulkCategorize(t *testing.T) {
 		id1 := env.seedTx(t)
 		id2 := env.seedTx(t)
 		// id1 already "Unknown"; bulk-categorizing to "Unknown" is a no-op for it.
-		if err := env.annSvc.BulkCategorize(context.Background(), []int64{id1, id2, id1}, "Unknown"); err != nil {
+		if err := env.annSvc.BulkCategorize(context.Background(), []int64{id1, id2, id1}, "Unknown", nil); err != nil {
 			t.Fatalf("bulk categorize: %v", err)
 		}
 		entries, _ := env.auditRepo.Query(context.Background(), ports.AuditEntryFilter{Action: strPtr("categorize")})
@@ -552,7 +556,7 @@ func TestBulkCategorize(t *testing.T) {
 	t.Run("empty ids is an error", func(t *testing.T) {
 		env := newAnnotationTestEnv(t)
 		defer env.cleanup()
-		if err := env.annSvc.BulkCategorize(context.Background(), nil, "want"); err == nil {
+		if err := env.annSvc.BulkCategorize(context.Background(), nil, "want", nil); err == nil {
 			t.Fatal("expected error for empty id list")
 		}
 	})
@@ -562,7 +566,7 @@ func TestBulkCategorize(t *testing.T) {
 		defer env.cleanup()
 		id1 := env.seedTx(t)
 		missing := id1 + 9999
-		err := env.annSvc.BulkCategorize(context.Background(), []int64{id1, missing}, "want")
+		err := env.annSvc.BulkCategorize(context.Background(), []int64{id1, missing}, "want", nil)
 		if err == nil {
 			t.Fatal("expected error from missing id")
 		}
@@ -694,7 +698,7 @@ func TestUndoBulkCategorize(t *testing.T) {
 	id2 := env.seedTx(t)
 	id3 := env.seedTx(t)
 
-	if err := env.annSvc.BulkCategorize(context.Background(), []int64{id1, id2, id3}, "want"); err != nil {
+	if err := env.annSvc.BulkCategorize(context.Background(), []int64{id1, id2, id3}, "want", nil); err != nil {
 		t.Fatalf("bulk categorize: %v", err)
 	}
 	// One undo must revert the whole batch.
@@ -705,6 +709,129 @@ func TestUndoBulkCategorize(t *testing.T) {
 		txn, _ := env.txRepo.GetByID(context.Background(), id)
 		if txn.Category != "Unknown" {
 			t.Fatalf("txn %d category after undo = %q, want Unknown", id, txn.Category)
+		}
+	}
+}
+
+func TestCategorizeWithBucket(t *testing.T) {
+	t.Run("sets category and bucket on a transaction", func(t *testing.T) {
+		env := newAnnotationTestEnv(t)
+		defer env.cleanup()
+		id := env.seedTx(t)
+		bid, err := env.bucketRepo.Create(context.Background(), &entities.Bucket{
+			Name: "vacation-2026", Currency: "EUR", MonthlyAllocationMinor: 50000,
+		})
+		if err != nil {
+			t.Fatalf("create bucket: %v", err)
+		}
+		name := "vacation-2026"
+		if err := env.annSvc.Categorize(context.Background(), id, "want", &name); err != nil {
+			t.Fatalf("categorize: %v", err)
+		}
+		txn, _ := env.txRepo.GetByID(context.Background(), id)
+		if txn.Category != "want" {
+			t.Fatalf("category = %q, want want", txn.Category)
+		}
+		if txn.BucketID == nil || *txn.BucketID != bid {
+			t.Fatalf("bucket = %v, want %d", txn.BucketID, bid)
+		}
+		// Two audit rows share a timestamp.
+		entries, _ := env.auditRepo.Query(context.Background(), ports.AuditEntryFilter{})
+		var cat, buck *entities.AuditEntry
+		for _, e := range entries {
+			switch e.Action {
+			case "categorize":
+				cat = e
+			case "bucket_assign":
+				buck = e
+			}
+		}
+		if cat == nil || buck == nil {
+			t.Fatalf("expected both categorize and bucket_assign audit rows, got cat=%v buck=%v", cat, buck)
+		}
+		if !cat.CreatedAt.Equal(buck.CreatedAt) {
+			t.Fatalf("audit rows do not share timestamp")
+		}
+	})
+
+	t.Run("missing bucket is an error", func(t *testing.T) {
+		env := newAnnotationTestEnv(t)
+		defer env.cleanup()
+		id := env.seedTx(t)
+		name := "nope"
+		if err := env.annSvc.Categorize(context.Background(), id, "want", &name); err == nil {
+			t.Fatal("expected error for missing bucket")
+		}
+		txn, _ := env.txRepo.GetByID(context.Background(), id)
+		if txn.Category != "Unknown" {
+			t.Fatalf("category changed despite failure: %q", txn.Category)
+		}
+	})
+
+	t.Run("currency mismatch is an error", func(t *testing.T) {
+		env := newAnnotationTestEnv(t)
+		defer env.cleanup()
+		id := env.seedTx(t)
+		_, err := env.bucketRepo.Create(context.Background(), &entities.Bucket{
+			Name: "us-bucket", Currency: "USD", MonthlyAllocationMinor: 10000,
+		})
+		if err != nil {
+			t.Fatalf("create bucket: %v", err)
+		}
+		name := "us-bucket"
+		err = env.annSvc.Categorize(context.Background(), id, "want", &name)
+		if err == nil {
+			t.Fatal("expected currency mismatch error")
+		}
+	})
+
+	t.Run("undo restores prior bucket", func(t *testing.T) {
+		env := newAnnotationTestEnv(t)
+		defer env.cleanup()
+		id := env.seedTx(t)
+		bid, _ := env.bucketRepo.Create(context.Background(), &entities.Bucket{
+			Name: "rent", Currency: "EUR", MonthlyAllocationMinor: 80000,
+		})
+		if err := env.txRepo.SetBucket(context.Background(), id, bid); err != nil {
+			t.Fatalf("seed bucket: %v", err)
+		}
+		originalID := bid
+		_, _ = env.bucketRepo.Create(context.Background(), &entities.Bucket{
+			Name: "vacation", Currency: "EUR", MonthlyAllocationMinor: 50000,
+		})
+		name := "vacation"
+		if err := env.annSvc.Categorize(context.Background(), id, "want", &name); err != nil {
+			t.Fatalf("categorize: %v", err)
+		}
+		if err := env.annSvc.Undo(context.Background()); err != nil {
+			t.Fatalf("undo: %v", err)
+		}
+		txn, _ := env.txRepo.GetByID(context.Background(), id)
+		if txn.BucketID == nil || *txn.BucketID != originalID {
+			t.Fatalf("bucket after undo = %v, want %d", txn.BucketID, originalID)
+		}
+		if txn.Category != "Unknown" {
+			t.Fatalf("category after undo = %q, want Unknown", txn.Category)
+		}
+	})
+}
+
+func TestBulkCategorizeWithBucket(t *testing.T) {
+	env := newAnnotationTestEnv(t)
+	defer env.cleanup()
+	id1 := env.seedTx(t)
+	id2 := env.seedTx(t)
+	bid, _ := env.bucketRepo.Create(context.Background(), &entities.Bucket{
+		Name: "vacation-2026", Currency: "EUR", MonthlyAllocationMinor: 50000,
+	})
+	name := "vacation-2026"
+	if err := env.annSvc.BulkCategorize(context.Background(), []int64{id1, id2}, "want", &name); err != nil {
+		t.Fatalf("bulk categorize: %v", err)
+	}
+	for _, id := range []int64{id1, id2} {
+		txn, _ := env.txRepo.GetByID(context.Background(), id)
+		if txn.BucketID == nil || *txn.BucketID != bid {
+			t.Fatalf("txn %d bucket = %v, want %d", id, txn.BucketID, bid)
 		}
 	}
 }

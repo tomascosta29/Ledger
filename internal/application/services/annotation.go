@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,6 +17,7 @@ type AnnotationDeps struct {
 	DB         *sql.DB
 	TxRepo     ports.TransactionRepository
 	TagRepo    ports.TagRepository
+	BucketRepo ports.BucketRepository
 	AuditRepo  ports.AuditLogRepository
 	BatchRepo  ports.ImportBatchRepository
 	OverlaySvc ports.OverlayService
@@ -33,7 +35,7 @@ func NewAnnotationService(d AnnotationDeps) *AnnotationService {
 	return &AnnotationService{deps: d}
 }
 
-func (s *AnnotationService) Categorize(ctx context.Context, txID int64, category string) error {
+func (s *AnnotationService) Categorize(ctx context.Context, txID int64, category string, bucketName *string) error {
 	if category == "" {
 		return errors.New("category is empty")
 	}
@@ -41,23 +43,47 @@ func (s *AnnotationService) Categorize(ctx context.Context, txID int64, category
 	if err != nil {
 		return fmt.Errorf("load transaction: %w", err)
 	}
-	oldCategory := old.Category
+	bucket, err := s.resolveBucket(ctx, bucketName, string(old.Amount.Currency))
+	if err != nil {
+		return err
+	}
 
 	return s.runTx(ctx, func(tx *sql.Tx) error {
-		if err := s.deps.TxRepo.SetCategoryDBTX(ctx, tx, txID, category); err != nil {
-			return err
+		now := s.deps.Now()
+		if old.Category != category {
+			if err := s.deps.TxRepo.SetCategoryDBTX(ctx, tx, txID, category); err != nil {
+				return err
+			}
+			if _, err := s.deps.AuditRepo.AppendDBTX(ctx, tx, &entities.AuditEntry{
+				TableName: "transactions",
+				RecordID:  txID,
+				Action:    entities.AuditActionCategorize,
+				Field:     strPtr("category"),
+				OldValue:  strPtr(old.Category),
+				NewValue:  strPtr(category),
+				CreatedAt: now,
+			}); err != nil {
+				return err
+			}
 		}
-		entry := &entities.AuditEntry{
-			TableName: "transactions",
-			RecordID:  txID,
-			Action:    entities.AuditActionCategorize,
-			Field:     strPtr("category"),
-			OldValue:  strPtr(oldCategory),
-			NewValue:  strPtr(category),
-			CreatedAt: s.deps.Now(),
+		if bucket != nil && !sameBucketID(old.BucketID, &bucket.ID) {
+			if err := s.deps.TxRepo.SetBucketDBTX(ctx, tx, txID, &bucket.ID); err != nil {
+				return err
+			}
+			if _, err := s.deps.AuditRepo.AppendDBTX(ctx, tx, &entities.AuditEntry{
+				TableName: "transactions",
+				RecordID:  txID,
+				Action:    entities.AuditActionBucket,
+				Field:     strPtr("bucket_id"),
+				OldValue:  bucketIDToStringPtr(old.BucketID),
+				NewValue:  bucketIDToStringPtr(&bucket.ID),
+				CreatedAt: now,
+			}); err != nil {
+				return err
+			}
 		}
-		if _, err := s.deps.AuditRepo.AppendDBTX(ctx, tx, entry); err != nil {
-			return err
+		if old.Category == category && (bucket == nil || sameBucketID(old.BucketID, &bucket.ID)) {
+			return nil
 		}
 		return s.deps.OverlaySvc.RebuildWithTx(ctx, tx)
 	})
@@ -205,7 +231,7 @@ func joinTags(s []string) string {
 	return out
 }
 
-func (s *AnnotationService) BulkCategorize(ctx context.Context, txIDs []int64, category string) error {
+func (s *AnnotationService) BulkCategorize(ctx context.Context, txIDs []int64, category string, bucketName *string) error {
 	if category == "" {
 		return errors.New("category is empty")
 	}
@@ -214,38 +240,74 @@ func (s *AnnotationService) BulkCategorize(ctx context.Context, txIDs []int64, c
 	}
 	uniqueIDs := dedupIDs(txIDs)
 
-	oldByID := make(map[int64]string, len(uniqueIDs))
+	oldByID := make(map[int64]*entities.Transaction, len(uniqueIDs))
 	for _, id := range uniqueIDs {
 		txn, err := s.deps.TxRepo.GetByID(ctx, id)
 		if err != nil {
 			return fmt.Errorf("load transaction %d: %w", id, err)
 		}
-		oldByID[id] = txn.Category
+		oldByID[id] = txn
+	}
+
+	var bucket *entities.Bucket
+	if bucketName != nil {
+		currencies := make(map[string]struct{}, len(uniqueIDs))
+		for _, id := range uniqueIDs {
+			currencies[string(oldByID[id].Amount.Currency)] = struct{}{}
+		}
+		if len(currencies) > 1 {
+			return fmt.Errorf("--bucket cannot span multiple currencies: %d distinct currencies in selection", len(currencies))
+		}
+		var cur string
+		for c := range currencies {
+			cur = c
+		}
+		b, err := s.resolveBucket(ctx, bucketName, cur)
+		if err != nil {
+			return err
+		}
+		bucket = b
 	}
 
 	return s.runTx(ctx, func(tx *sql.Tx) error {
 		wrote := false
 		now := s.deps.Now()
 		for _, id := range uniqueIDs {
-			if oldByID[id] == category {
-				continue
+			old := oldByID[id]
+			if old.Category != category {
+				if err := s.deps.TxRepo.SetCategoryDBTX(ctx, tx, id, category); err != nil {
+					return err
+				}
+				if _, err := s.deps.AuditRepo.AppendDBTX(ctx, tx, &entities.AuditEntry{
+					TableName: "transactions",
+					RecordID:  id,
+					Action:    entities.AuditActionCategorize,
+					Field:     strPtr("category"),
+					OldValue:  strPtr(old.Category),
+					NewValue:  strPtr(category),
+					CreatedAt: now,
+				}); err != nil {
+					return err
+				}
+				wrote = true
 			}
-			if err := s.deps.TxRepo.SetCategoryDBTX(ctx, tx, id, category); err != nil {
-				return err
+			if bucket != nil && !sameBucketID(old.BucketID, &bucket.ID) {
+				if err := s.deps.TxRepo.SetBucketDBTX(ctx, tx, id, &bucket.ID); err != nil {
+					return err
+				}
+				if _, err := s.deps.AuditRepo.AppendDBTX(ctx, tx, &entities.AuditEntry{
+					TableName: "transactions",
+					RecordID:  id,
+					Action:    entities.AuditActionBucket,
+					Field:     strPtr("bucket_id"),
+					OldValue:  bucketIDToStringPtr(old.BucketID),
+					NewValue:  bucketIDToStringPtr(&bucket.ID),
+					CreatedAt: now,
+				}); err != nil {
+					return err
+				}
+				wrote = true
 			}
-			entry := &entities.AuditEntry{
-				TableName: "transactions",
-				RecordID:  id,
-				Action:    entities.AuditActionCategorize,
-				Field:     strPtr("category"),
-				OldValue:  strPtr(oldByID[id]),
-				NewValue:  strPtr(category),
-				CreatedAt: now,
-			}
-			if _, err := s.deps.AuditRepo.AppendDBTX(ctx, tx, entry); err != nil {
-				return err
-			}
-			wrote = true
 		}
 		if !wrote {
 			return nil
@@ -477,6 +539,19 @@ func (s *AnnotationService) Undo(ctx context.Context) error {
 					return fmt.Errorf("restore hidden for txn %d: %w", entry.RecordID, err)
 				}
 
+			case entities.AuditActionBucket:
+				var bucketID *int64
+				if entry.OldValue != nil && *entry.OldValue != "" {
+					id, err := strconv.ParseInt(*entry.OldValue, 10, 64)
+					if err != nil {
+						return fmt.Errorf("parse old bucket id %q: %w", *entry.OldValue, err)
+					}
+					bucketID = &id
+				}
+				if err := s.deps.TxRepo.SetBucketDBTX(ctx, tx, entry.RecordID, bucketID); err != nil {
+					return fmt.Errorf("restore bucket for txn %d: %w", entry.RecordID, err)
+				}
+
 			case entities.AuditActionTag:
 				if err := s.deps.TagRepo.ClearDBTX(ctx, tx, entry.RecordID); err != nil {
 					return fmt.Errorf("clear tags for txn %d: %w", entry.RecordID, err)
@@ -519,4 +594,46 @@ func (s *AnnotationService) Undo(ctx context.Context) error {
 
 		return s.deps.OverlaySvc.RebuildWithTx(ctx, tx)
 	})
+}
+
+func (s *AnnotationService) resolveBucket(ctx context.Context, name *string, txnCurrency string) (*entities.Bucket, error) {
+	if name == nil {
+		return nil, nil
+	}
+	if s.deps.BucketRepo == nil {
+		return nil, errors.New("bucket service not configured")
+	}
+	bucket, err := s.deps.BucketRepo.GetByName(ctx, *name)
+	if err != nil {
+		if errors.Is(err, ports.ErrNotFound) {
+			return nil, fmt.Errorf("bucket %q not found", *name)
+		}
+		return nil, fmt.Errorf("lookup bucket: %w", err)
+	}
+	if bucket.ArchivedAt != nil {
+		return nil, fmt.Errorf("bucket %q is archived", *name)
+	}
+	if bucket.Currency != txnCurrency {
+		return nil, fmt.Errorf("bucket %q is %s but transaction is %s", *name, bucket.Currency, txnCurrency)
+	}
+	return bucket, nil
+}
+
+func sameBucketID(a, b *int64) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return *a == *b
+}
+
+func bucketIDToStringPtr(id *int64) *string {
+	if id == nil {
+		s := ""
+		return &s
+	}
+	s := strconv.FormatInt(*id, 10)
+	return &s
 }

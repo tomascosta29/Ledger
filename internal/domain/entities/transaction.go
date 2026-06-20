@@ -19,6 +19,7 @@ type Transaction struct {
 	RawData            []byte
 	RawDescription     *string
 	Category           string
+	BucketID           *int64
 	ExcludeFromReports bool
 	IsHidden           bool
 	CreatedAt          time.Time

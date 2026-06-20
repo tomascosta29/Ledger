@@ -44,6 +44,7 @@ func init() {
 	rootCmd.AddCommand(categorizeCmd)
 	rootCmd.AddCommand(hideCmd)
 	rootCmd.AddCommand(tagCmd)
+	rootCmd.AddCommand(undoCmd)
 	importCmd.Flags().StringVarP(&importProfile, "profile", "p", "", "bank profile (erste, revolut, or custom TOML)")
 	importCmd.Flags().BoolVar(&importDryRun, "dry-run", false, "parse and preview without writing to the DB")
 	listCmd.Flags().IntVar(&listLimit, "limit", 50, "max number of rows to show")
@@ -403,12 +404,45 @@ func runAnnotation(ctx context.Context, fn func(*services.AnnotationService) err
 		TxRepo:     persistence.NewTransactionRepository(db),
 		TagRepo:    persistence.NewTagRepository(db),
 		AuditRepo:  persistence.NewAuditLogRepository(db),
+		BatchRepo:  persistence.NewImportBatchRepository(db),
 		OverlaySvc: services.NewOverlayService(db.DB),
 	})
 	if err := fn(svc); err != nil {
 		return err
 	}
 	fmt.Printf("✓ %s\n", successMsg)
+	return nil
+}
+
+var undoCmd = &cobra.Command{
+	Use:   "undo",
+	Short: "Undo the last operation (reverts categories, hidden state, tags, or imports)",
+	Args:  cobra.NoArgs,
+	RunE:  runUndo,
+}
+
+func runUndo(cmd *cobra.Command, args []string) error {
+	ctx := ctxFromCmd(cmd)
+	dbPath := persistence.DefaultDBPath()
+	db, err := persistence.Open(ctx, dbPath)
+	if err != nil {
+		return fmt.Errorf("open db: %w", err)
+	}
+	defer db.Close()
+
+	svc := services.NewAnnotationService(services.AnnotationDeps{
+		DB:         db.DB,
+		TxRepo:     persistence.NewTransactionRepository(db),
+		TagRepo:    persistence.NewTagRepository(db),
+		AuditRepo:  persistence.NewAuditLogRepository(db),
+		BatchRepo:  persistence.NewImportBatchRepository(db),
+		OverlaySvc: services.NewOverlayService(db.DB),
+	})
+
+	if err := svc.Undo(ctx); err != nil {
+		return err
+	}
+	fmt.Println("✓ undo: last operation reverted successfully")
 	return nil
 }
 

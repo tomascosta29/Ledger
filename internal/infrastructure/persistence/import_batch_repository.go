@@ -99,3 +99,19 @@ func scanBatch(s scanner) (*entities.ImportBatch, error) {
 	b.CreatedAt = parseISO(createdAt)
 	return &b, nil
 }
+
+func (r *ImportBatchRepository) Delete(ctx context.Context, id int64) error {
+	return r.DeleteDBTX(ctx, r.db, id)
+}
+
+func (r *ImportBatchRepository) DeleteDBTX(ctx context.Context, db ports.DBTX, id int64) error {
+	res, err := db.ExecContext(ctx, `DELETE FROM import_batches WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("delete import batch: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ports.ErrNotFound
+	}
+	return nil
+}

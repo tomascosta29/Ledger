@@ -25,20 +25,20 @@ const (
 )
 
 type TxFilters struct {
-	StartDate           *string
-	EndDate             *string
-	IsHidden            *bool
-	ExcludeFromReports  *bool
-	Category            *string
-	Categories          []string
-	PartnerName         *string
-	PartnerIBAN         *string
-	AmountMinMinor      *int64
-	AmountMaxMinor      *int64
-	AmountSign          *string
-	DescriptionLike     *string
-	IDs                 []int64
-	ExcludeIDs          []int64
+	StartDate          *string
+	EndDate            *string
+	IsHidden           *bool
+	ExcludeFromReports *bool
+	Category           *string
+	Categories         []string
+	PartnerName        *string
+	PartnerIBAN        *string
+	AmountMinMinor     *int64
+	AmountMaxMinor     *int64
+	AmountSign         *string
+	DescriptionLike    *string
+	IDs                []int64
+	ExcludeIDs         []int64
 }
 
 type TxFindOptions struct {
@@ -62,4 +62,7 @@ type TransactionRepository interface {
 
 	SetCategoryDBTX(ctx context.Context, db DBTX, id int64, category string) error
 	SetHiddenDBTX(ctx context.Context, db DBTX, id int64, hidden bool) error
+	GetByIDDBTX(ctx context.Context, db DBTX, id int64) (*entities.Transaction, error)
+	Delete(ctx context.Context, id int64) error
+	DeleteDBTX(ctx context.Context, db DBTX, id int64) error
 }

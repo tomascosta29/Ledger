@@ -94,3 +94,15 @@ func (r *TagRepository) ListByTag(ctx context.Context, tag string) ([]int64, err
 func normalizeTag(s string) string {
 	return strings.TrimSpace(strings.ToLower(s))
 }
+
+func (r *TagRepository) Clear(ctx context.Context, transactionID int64) error {
+	return r.ClearDBTX(ctx, r.db, transactionID)
+}
+
+func (r *TagRepository) ClearDBTX(ctx context.Context, db ports.DBTX, transactionID int64) error {
+	_, err := db.ExecContext(ctx, `DELETE FROM transaction_tags WHERE transaction_id = ?`, transactionID)
+	if err != nil {
+		return fmt.Errorf("clear tags: %w", err)
+	}
+	return nil
+}

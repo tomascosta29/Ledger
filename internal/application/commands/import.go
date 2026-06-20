@@ -14,11 +14,11 @@ import (
 )
 
 type ImportDeps struct {
-	TxRepo        ports.TransactionRepository
-	BatchRepo     ports.ImportBatchRepository
-	AuditRepo     ports.AuditLogRepository
-	OverlaySvc    ports.OverlayService
-	Now           func() time.Time
+	TxRepo     ports.TransactionRepository
+	BatchRepo  ports.ImportBatchRepository
+	AuditRepo  ports.AuditLogRepository
+	OverlaySvc ports.OverlayService
+	Now        func() time.Time
 }
 
 type ImportOptions struct {

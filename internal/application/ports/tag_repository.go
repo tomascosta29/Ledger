@@ -10,4 +10,6 @@ type TagRepository interface {
 
 	AddDBTX(ctx context.Context, db DBTX, transactionID int64, tag string) error
 	RemoveDBTX(ctx context.Context, db DBTX, transactionID int64, tag string) error
+	Clear(ctx context.Context, transactionID int64) error
+	ClearDBTX(ctx context.Context, db DBTX, transactionID int64) error
 }

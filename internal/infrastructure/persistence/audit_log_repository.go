@@ -115,11 +115,11 @@ func (r *AuditLogRepository) Query(ctx context.Context, filter ports.AuditEntryF
 	out := make([]*entities.AuditEntry, 0, 32)
 	for rows.Next() {
 		var (
-			e          entities.AuditEntry
-			field      sql.NullString
-			oldValue   sql.NullString
-			newValue   sql.NullString
-			createdAt  string
+			e         entities.AuditEntry
+			field     sql.NullString
+			oldValue  sql.NullString
+			newValue  sql.NullString
+			createdAt string
 		)
 		if err := rows.Scan(&e.ID, &e.TableName, &e.RecordID, &e.Action, &field, &oldValue, &newValue, &createdAt); err != nil {
 			return nil, fmt.Errorf("scan audit: %w", err)
@@ -183,4 +183,64 @@ func (r *AuditLogRepository) LatestTimestamp(ctx context.Context) (time.Time, er
 		return time.Time{}, err
 	}
 	return parseISO(s), nil
+}
+
+func (r *AuditLogRepository) GetByTimestamp(ctx context.Context, timestamp string) ([]*entities.AuditEntry, error) {
+	return r.GetByTimestampDBTX(ctx, r.db, timestamp)
+}
+
+func (r *AuditLogRepository) GetByTimestampDBTX(ctx context.Context, db ports.DBTX, timestamp string) ([]*entities.AuditEntry, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT id, table_name, record_id, action, field, old_value, new_value, created_at
+		FROM audit_log
+		WHERE created_at = ?
+		ORDER BY id DESC
+	`, timestamp)
+	if err != nil {
+		return nil, fmt.Errorf("query audit by timestamp: %w", err)
+	}
+	defer rows.Close()
+	out := make([]*entities.AuditEntry, 0, 8)
+	for rows.Next() {
+		var (
+			e         entities.AuditEntry
+			field     sql.NullString
+			oldValue  sql.NullString
+			newValue  sql.NullString
+			createdAt string
+		)
+		if err := rows.Scan(&e.ID, &e.TableName, &e.RecordID, &e.Action, &field, &oldValue, &newValue, &createdAt); err != nil {
+			return nil, fmt.Errorf("scan audit: %w", err)
+		}
+		e.Field = nullStringToPtr(field)
+		e.OldValue = nullStringToPtr(oldValue)
+		e.NewValue = nullStringToPtr(newValue)
+		e.CreatedAt = parseISO(createdAt)
+		out = append(out, &e)
+	}
+	return out, rows.Err()
+}
+
+func (r *AuditLogRepository) FindLatestUndoneTimestamp(ctx context.Context) (string, error) {
+	return r.FindLatestUndoneTimestampDBTX(ctx, r.db)
+}
+
+func (r *AuditLogRepository) FindLatestUndoneTimestampDBTX(ctx context.Context, db ports.DBTX) (string, error) {
+	// Query for the latest timestamp that has not been undone and is not an undo itself.
+	row := db.QueryRowContext(ctx, `
+		SELECT created_at FROM audit_log
+		WHERE action != 'undo'
+		  AND created_at NOT IN (
+		    SELECT old_value FROM audit_log WHERE action = 'undo' AND old_value IS NOT NULL
+		  )
+		ORDER BY created_at DESC, id DESC LIMIT 1
+	`)
+	var s string
+	if err := row.Scan(&s); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil
+		}
+		return "", fmt.Errorf("find latest undone timestamp: %w", err)
+	}
+	return s, nil
 }

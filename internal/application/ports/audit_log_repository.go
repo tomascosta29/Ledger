@@ -20,4 +20,6 @@ type AuditLogRepository interface {
 	Query(ctx context.Context, filter AuditEntryFilter) ([]*entities.AuditEntry, error)
 	LastBatch(ctx context.Context, tableName string, recordID int64) ([]*entities.AuditEntry, error)
 	AppendDBTX(ctx context.Context, db DBTX, entry *entities.AuditEntry) (int64, error)
+	GetByTimestampDBTX(ctx context.Context, db DBTX, timestamp string) ([]*entities.AuditEntry, error)
+	FindLatestUndoneTimestampDBTX(ctx context.Context, db DBTX) (string, error)
 }

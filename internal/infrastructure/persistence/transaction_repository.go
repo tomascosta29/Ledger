@@ -133,15 +133,15 @@ var allowedSortColumns = map[string]bool{
 }
 
 var allowedUpdateColumns = map[string]bool{
-	"effective_date":       true,
-	"amount_minor":         true,
-	"currency":             true,
-	"description":          true,
-	"partner_name":         true,
-	"partner_iban":         true,
-	"category":             true,
-	"exclude_from_reports": true,
-	"is_hidden":            true,
+	"effective_date":        true,
+	"amount_minor":          true,
+	"currency":              true,
+	"description":           true,
+	"partner_name":          true,
+	"partner_iban":          true,
+	"category":              true,
+	"exclude_from_reports":  true,
+	"is_hidden":             true,
 	"parent_transaction_id": true,
 }
 
@@ -151,23 +151,23 @@ type scanner interface {
 
 func scanTransaction(s scanner) (*entities.Transaction, error) {
 	var (
-		id                int64
-		effDate           string
-		amountMinor       int64
-		currencyStr       string
-		description       string
-		partnerName       sql.NullString
-		partnerIBAN       sql.NullString
-		importBatchID     sql.NullInt64
-		parentTxnID       sql.NullInt64
-		sourceHash        string
-		rawData           []byte
-		rawDescription    sql.NullString
-		category          string
-		excludeFromRep    int
-		isHidden          int
-		createdAtStr      string
-		updatedAtStr      string
+		id             int64
+		effDate        string
+		amountMinor    int64
+		currencyStr    string
+		description    string
+		partnerName    sql.NullString
+		partnerIBAN    sql.NullString
+		importBatchID  sql.NullInt64
+		parentTxnID    sql.NullInt64
+		sourceHash     string
+		rawData        []byte
+		rawDescription sql.NullString
+		category       string
+		excludeFromRep int
+		isHidden       int
+		createdAtStr   string
+		updatedAtStr   string
 	)
 	err := s.Scan(
 		&id, &effDate, &amountMinor, &currencyStr, &description,
@@ -207,7 +207,11 @@ func scanTransaction(s scanner) (*entities.Transaction, error) {
 }
 
 func (r *TransactionRepository) GetByID(ctx context.Context, id int64) (*entities.Transaction, error) {
-	row := r.db.QueryRowContext(ctx, selectAllColumnsSQL+" WHERE id = ?", id)
+	return r.GetByIDDBTX(ctx, r.db, id)
+}
+
+func (r *TransactionRepository) GetByIDDBTX(ctx context.Context, db ports.DBTX, id int64) (*entities.Transaction, error) {
+	row := db.QueryRowContext(ctx, selectAllColumnsSQL+" WHERE id = ?", id)
 	return scanTransaction(row)
 }
 
@@ -334,6 +338,22 @@ func (r *TransactionRepository) SetHiddenDBTX(ctx context.Context, db ports.DBTX
 	)
 	if err != nil {
 		return fmt.Errorf("set hidden: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ports.ErrNotFound
+	}
+	return nil
+}
+
+func (r *TransactionRepository) Delete(ctx context.Context, id int64) error {
+	return r.DeleteDBTX(ctx, r.db, id)
+}
+
+func (r *TransactionRepository) DeleteDBTX(ctx context.Context, db ports.DBTX, id int64) error {
+	res, err := db.ExecContext(ctx, `DELETE FROM transactions WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("delete transaction: %w", err)
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {

@@ -140,7 +140,7 @@ func (m Money) Sub(other Money) (Money, error) {
 	return Money{Amount: m.Amount - other.Amount, Currency: m.Currency}, nil
 }
 
-func (m Money) IsZero() bool  { return m.Amount == 0 }
+func (m Money) IsZero() bool     { return m.Amount == 0 }
 func (m Money) IsPositive() bool { return m.Amount > 0 }
 func (m Money) IsNegative() bool { return m.Amount < 0 }
 

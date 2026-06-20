@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/tomascosta29/Ledger/internal/application/ports"
@@ -16,6 +17,7 @@ type AnnotationDeps struct {
 	TxRepo     ports.TransactionRepository
 	TagRepo    ports.TagRepository
 	AuditRepo  ports.AuditLogRepository
+	BatchRepo  ports.ImportBatchRepository
 	OverlaySvc ports.OverlayService
 	Now        func() time.Time
 }
@@ -201,4 +203,107 @@ func joinTags(s []string) string {
 		out += "," + x
 	}
 	return out
+}
+
+func (s *AnnotationService) Undo(ctx context.Context) error {
+	return s.runTx(ctx, func(tx *sql.Tx) error {
+		ts, err := s.deps.AuditRepo.FindLatestUndoneTimestampDBTX(ctx, tx)
+		if err != nil {
+			return fmt.Errorf("find latest undone timestamp: %w", err)
+		}
+		if ts == "" {
+			return errors.New("nothing to undo")
+		}
+
+		entries, err := s.deps.AuditRepo.GetByTimestampDBTX(ctx, tx, ts)
+		if err != nil {
+			return fmt.Errorf("load audit entries: %w", err)
+		}
+		if len(entries) == 0 {
+			return errors.New("nothing to undo")
+		}
+
+		if _, err := tx.ExecContext(ctx, `DELETE FROM overlay_transactions`); err != nil {
+			return fmt.Errorf("clear overlay: %w", err)
+		}
+
+		importBatchesToDelete := make(map[int64]bool)
+
+		for _, entry := range entries {
+			switch entry.Action {
+			case entities.AuditActionImport:
+				txn, err := s.deps.TxRepo.GetByIDDBTX(ctx, tx, entry.RecordID)
+				if err != nil {
+					if errors.Is(err, ports.ErrNotFound) {
+						continue
+					}
+					return fmt.Errorf("get transaction %d: %w", entry.RecordID, err)
+				}
+				if txn.ImportBatchID != nil {
+					importBatchesToDelete[*txn.ImportBatchID] = true
+				}
+				if err := s.deps.TxRepo.DeleteDBTX(ctx, tx, entry.RecordID); err != nil {
+					return fmt.Errorf("delete transaction %d: %w", entry.RecordID, err)
+				}
+
+			case entities.AuditActionCategorize:
+				category := "Unknown"
+				if entry.OldValue != nil {
+					category = *entry.OldValue
+				}
+				if err := s.deps.TxRepo.SetCategoryDBTX(ctx, tx, entry.RecordID, category); err != nil {
+					return fmt.Errorf("restore category for txn %d: %w", entry.RecordID, err)
+				}
+
+			case entities.AuditActionVisibility:
+				hidden := false
+				if entry.OldValue != nil && *entry.OldValue == "true" {
+					hidden = true
+				}
+				if err := s.deps.TxRepo.SetHiddenDBTX(ctx, tx, entry.RecordID, hidden); err != nil {
+					return fmt.Errorf("restore hidden for txn %d: %w", entry.RecordID, err)
+				}
+
+			case entities.AuditActionTag:
+				if err := s.deps.TagRepo.ClearDBTX(ctx, tx, entry.RecordID); err != nil {
+					return fmt.Errorf("clear tags for txn %d: %w", entry.RecordID, err)
+				}
+				if entry.OldValue != nil && *entry.OldValue != "" {
+					tags := strings.Split(*entry.OldValue, ",")
+					for _, tag := range tags {
+						tag = strings.TrimSpace(tag)
+						if tag != "" {
+							if err := s.deps.TagRepo.AddDBTX(ctx, tx, entry.RecordID, tag); err != nil {
+								return fmt.Errorf("restore tag %q for txn %d: %w", tag, entry.RecordID, err)
+							}
+						}
+					}
+				}
+
+			default:
+				return fmt.Errorf("cannot undo action %q: unsupported action type", entry.Action)
+			}
+		}
+
+		for batchID := range importBatchesToDelete {
+			if s.deps.BatchRepo != nil {
+				if err := s.deps.BatchRepo.DeleteDBTX(ctx, tx, batchID); err != nil {
+					return fmt.Errorf("delete empty import batch %d: %w", batchID, err)
+				}
+			}
+		}
+
+		undoEntry := &entities.AuditEntry{
+			TableName: "audit_log",
+			RecordID:  0,
+			Action:    entities.AuditActionUndo,
+			OldValue:  &ts,
+			CreatedAt: s.deps.Now(),
+		}
+		if _, err := s.deps.AuditRepo.AppendDBTX(ctx, tx, undoEntry); err != nil {
+			return fmt.Errorf("append undo audit entry: %w", err)
+		}
+
+		return s.deps.OverlaySvc.RebuildWithTx(ctx, tx)
+	})
 }

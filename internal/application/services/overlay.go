@@ -9,8 +9,8 @@ import (
 )
 
 type OverlayService struct {
-	db        *sql.DB
-	now       func() time.Time
+	db  *sql.DB
+	now func() time.Time
 }
 
 func NewOverlayService(db *sql.DB) *OverlayService {

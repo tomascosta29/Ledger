@@ -76,7 +76,7 @@ v2 or later. For status of what's already shipped, see
 | Transfer detection (heuristic, persisted groups)        | ⏳      | Interactive confirm, `ledger transfers detect`                       |
 | Summary recipes (include/exclude/amortize/net, TOML)    | ⏳      | Recipes screen + CLI flag                                            |
 | Budget (per-bucket allocation, spent vs allocated)       | ⏳      | Budget screen; needs buckets table first                            |
-| Undo (reverse-last-batch, atomic)                        | ⏳      | Audit log captures every change; one method to write                |
+| Undo (reverse-last-batch, atomic)                        | ✓      | Audit log captures every change; one method to write                |
 | History (audit log viewer)                               | ⏳      | `ledger history` command                                            |
 | Multi-currency grouping                                  | ✓      | No FX, no config                                                     |
 | Overlay (materialized read model)                       | ✓      | See [ADR 0002](./docs/adr/0002-overlay-rebuild-strategy.md)        |
@@ -100,6 +100,7 @@ ledger rebuild-overlay               # full overlay rebuild (drift recovery)
 ledger categorize <txID> --category X
 ledger hide <txID> [--unhide]
 ledger tag <txID> --add foo,bar [--remove baz]
+ledger undo                          # reverse last batch
 ledger tui                           # placeholder; full TUI ⏳
 ```
 
@@ -112,7 +113,6 @@ ledger categorize <id1,id2,...>      # bulk (today: one id at a time)
 ledger tag <id1,id2,...> --add       # bulk tag
 ledger hide <id1,id2,...>            # bulk hide
 ledger split <txID>                  # split into N children
-ledger undo                          # reverse last batch
 ledger history [--tx-id N]           # audit log viewer
 ledger transfers detect              # heuristic transfer detection
 ledger reimburse link                # manual group linking

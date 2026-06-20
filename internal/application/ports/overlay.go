@@ -11,24 +11,24 @@ import (
 type SourceKind string
 
 const (
-	SourceRaw               SourceKind = "raw"
-	SourceSplitChild        SourceKind = "split_child"
-	SourceSplitHeader       SourceKind = "split_header"
-	SourceTransferGroup     SourceKind = "transfer_group"
+	SourceRaw                SourceKind = "raw"
+	SourceSplitChild         SourceKind = "split_child"
+	SourceSplitHeader        SourceKind = "split_header"
+	SourceTransferGroup      SourceKind = "transfer_group"
 	SourceReimbursementGroup SourceKind = "reimbursement_group"
 )
 
 type OverlayFilters struct {
-	StartDate           *string
-	EndDate             *string
-	IsHidden            *bool
-	ExcludeFromReports  *bool
-	Category            *string
-	Categories          []string
-	SourceKinds         []SourceKind
-	GroupID             *int64
-	ParentOverlayID     *int64
-	RawTransactionID    *int64
+	StartDate          *string
+	EndDate            *string
+	IsHidden           *bool
+	ExcludeFromReports *bool
+	Category           *string
+	Categories         []string
+	SourceKinds        []SourceKind
+	GroupID            *int64
+	ParentOverlayID    *int64
+	RawTransactionID   *int64
 }
 
 type OverlaySortField string

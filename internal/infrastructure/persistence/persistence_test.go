@@ -51,14 +51,14 @@ func TestTransactionRoundTrip(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Millisecond)
 
 	tx := &entities.Transaction{
-		EffectiveDate:  "2026-06-15",
-		Amount:         valueobjects.MustNew(-12345, valueobjects.EUR),
-		Description:    desc,
-		PartnerName:    &partner,
-		SourceHash:     "abc123",
-		Category:       "Unknown",
-		CreatedAt:      now,
-		UpdatedAt:      now,
+		EffectiveDate: "2026-06-15",
+		Amount:        valueobjects.MustNew(-12345, valueobjects.EUR),
+		Description:   desc,
+		PartnerName:   &partner,
+		SourceHash:    "abc123",
+		Category:      "Unknown",
+		CreatedAt:     now,
+		UpdatedAt:     now,
 	}
 
 	id, err := repo.Insert(ctx, tx)

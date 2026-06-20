@@ -15,7 +15,7 @@ var (
 )
 
 var (
-	ibanAllowed = regexp.MustCompile(`^[A-Z0-9]+$`)
+	ibanAllowed        = regexp.MustCompile(`^[A-Z0-9]+$`)
 	ibanCountryLengths = map[string]int{
 		"AT": 20,
 		"DE": 22,

@@ -141,24 +141,24 @@ func buildOverlayWhere(f ports.OverlayFilters) (string, []any) {
 
 func scanOverlay(s scanner) (*ports.OverlayTransaction, error) {
 	var (
-		id               int64
-		effDate          string
-		amountMinor      int64
-		currencyStr      string
-		description      string
-		partnerName      sql.NullString
-		partnerIBAN      sql.NullString
-		category         string
-		bucketID         sql.NullInt64
-		tags             string
-		parentOverlayID  sql.NullInt64
-		groupID          sql.NullInt64
-		groupRole        sql.NullString
-		sourceKind       string
-		rawTxnID         sql.NullInt64
-		rawTxnIDs        sql.NullString
-		excludeFromRep   int
-		refreshedAtStr   string
+		id              int64
+		effDate         string
+		amountMinor     int64
+		currencyStr     string
+		description     string
+		partnerName     sql.NullString
+		partnerIBAN     sql.NullString
+		category        string
+		bucketID        sql.NullInt64
+		tags            string
+		parentOverlayID sql.NullInt64
+		groupID         sql.NullInt64
+		groupRole       sql.NullString
+		sourceKind      string
+		rawTxnID        sql.NullInt64
+		rawTxnIDs       sql.NullString
+		excludeFromRep  int
+		refreshedAtStr  string
 	)
 	err := s.Scan(
 		&id, &effDate, &amountMinor, &currencyStr, &description,

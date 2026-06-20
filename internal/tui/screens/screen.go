@@ -28,6 +28,7 @@ type Deps struct {
 	BucketRepo  ports.BucketRepository
 	AuditRepo   ports.AuditLogRepository
 	BatchRepo   ports.ImportBatchRepository
+	GroupRepo   ports.GroupRepository
 	OverlayRepo ports.OverlayRepository
 	OverlaySvc  ports.OverlayService
 	BudgetSvc   BudgetQuerier

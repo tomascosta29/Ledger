@@ -228,15 +228,143 @@ func (c *Categorizer) View() string {
 	return b.String()
 }
 
-type Linker struct{}
+type Linker struct {
+	deps      Deps
+	cands     []linkerCand
+	groups    []linkerGroup
+	cursor    int
+	focus     int // 0 = candidates, 1 = groups
+	statusMsg string
+}
+
+type linkerCand struct {
+	score  int
+	outID  int64
+	inID   int64
+	outTxt string
+	inTxt  string
+}
+
+type linkerGroup struct {
+	id    int64
+	typ   string
+	note  string
+}
 
 func NewLinker() *Linker { return &Linker{} }
+
 func (l *Linker) Title() string { return "Linker" }
-func (l *Linker) Init(ctx context.Context, deps Deps) tea.Cmd { return nil }
-func (l *Linker) Update(msg tea.Msg) (Screen, tea.Cmd)        { return l, nil }
+
+func (l *Linker) Init(ctx context.Context, deps Deps) tea.Cmd {
+	l.deps = deps
+	l.reload(ctx)
+	return nil
+}
+
+func (l *Linker) reload(ctx context.Context) {
+	svc := services.NewTransferService(services.TransferDetectionDeps{
+		TxRepo:    l.deps.TxRepo,
+		GroupRepo: l.deps.GroupRepo,
+		AuditRepo: l.deps.AuditRepo,
+		OverlaySvc: l.deps.OverlaySvc,
+	})
+	cands, err := svc.Detect(ctx)
+	if err != nil {
+		l.statusMsg = "detect: " + err.Error()
+		return
+	}
+	l.cands = l.cands[:0]
+	for _, c := range cands {
+		l.cands = append(l.cands, linkerCand{
+			score:  c.Score,
+			outID:  c.OutID,
+			inID:   c.InID,
+			outTxt: fmt.Sprintf("%d  %s  %s  %d", c.OutID, c.OutDate, c.OutPartner, c.OutAmount),
+			inTxt:  fmt.Sprintf("%d  %s  %s  %d", c.InID, c.InDate, c.InPartner, c.InAmount),
+		})
+	}
+	groupRepo := linkerGroupRepo(l.deps)
+	if groupRepo != nil {
+		all, err := groupRepo.ListGroups(ctx)
+		if err == nil {
+			l.groups = l.groups[:0]
+			for _, g := range all {
+				note := g.Name
+				if note == "" {
+					note = fmt.Sprintf("%d", g.ID)
+				}
+				l.groups = append(l.groups, linkerGroup{id: g.ID, typ: g.Type, note: note})
+			}
+		}
+	}
+	if l.cursor >= len(l.cands)+len(l.groups) {
+		l.cursor = len(l.cands) + len(l.groups) - 1
+	}
+	if l.cursor < 0 {
+		l.cursor = 0
+	}
+	l.statusMsg = fmt.Sprintf("%d candidates · %d groups", len(l.cands), len(l.groups))
+}
+
+func (l *Linker) Update(msg tea.Msg) (Screen, tea.Cmd) {
+	ctx := context.Background()
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		total := len(l.cands) + len(l.groups)
+		switch msg.String() {
+		case "j", "down":
+			if l.cursor < total-1 {
+				l.cursor++
+			}
+		case "k", "up":
+			if l.cursor > 0 {
+				l.cursor--
+			}
+		case "enter":
+			if l.cursor < len(l.cands) {
+				c := l.cands[l.cursor]
+				svc := services.NewTransferService(services.TransferDetectionDeps{
+					TxRepo: l.deps.TxRepo, GroupRepo: l.deps.GroupRepo,
+					AuditRepo: l.deps.AuditRepo, OverlaySvc: l.deps.OverlaySvc,
+				})
+				if _, err := svc.Confirm(ctx, services.TransferCandidate{
+					OutID: c.outID, InID: c.inID,
+				}); err != nil {
+					l.statusMsg = "confirm: " + err.Error()
+				} else {
+					l.statusMsg = fmt.Sprintf("linked %d ↔ %d", c.outID, c.inID)
+				}
+				l.reload(ctx)
+			}
+		}
+	}
+	return l, nil
+}
+
 func (l *Linker) View() string {
-	return "  (linker screen — group expenses with reimbursements)\n" +
-		"  feature ships in the rules + linker milestone\n"
+	var sb strings.Builder
+	sb.WriteString("  Candidates (j/k · enter: confirm as transfer):\n")
+	if len(l.cands) == 0 {
+		sb.WriteString("    (no transfer candidates)\n")
+	}
+	for i, c := range l.cands {
+		marker := "    "
+		if l.cursor == i {
+			marker = ">   "
+		}
+		fmt.Fprintf(&sb, "%sscore %d: out=%s | in=%s\n", marker, c.score, c.outTxt, c.inTxt)
+	}
+	if len(l.groups) > 0 {
+		sb.WriteString("\n  Existing groups:\n")
+		for i, g := range l.groups {
+			marker := "    "
+			if l.cursor == len(l.cands)+i {
+				marker = ">   "
+			}
+			fmt.Fprintf(&sb, "%s#%d  %-15s  %s\n", marker, g.id, g.typ, g.note)
+		}
+	}
+	return sb.String()
 }
 
 type Budget struct {
@@ -449,6 +577,8 @@ func (r *Recipes) View() string {
 	}
 	return b.String()
 }
+
+func linkerGroupRepo(d Deps) ports.GroupRepository { return d.GroupRepo }
 
 func annSvcFromDeps(d Deps) *services.AnnotationService {
 	return services.NewAnnotationService(services.AnnotationDeps{

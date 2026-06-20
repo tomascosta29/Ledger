@@ -51,7 +51,8 @@ v2 or later. For status of what's already shipped, see
      (bucket) / t (tag) keys with single-character prompts. Auto-reloads
      after each action.
   3. **Linker** — expense pane + reimbursement pane, link into persisted
-     group. Stub.
+     group. TUI ✓ (transfer candidates + existing groups; j/k/enter to
+     confirm). Manual reimbursement link: `ledger reimburse link <id1> <id2>`.
   4. **Budget** — per-bucket allocation + spent vs remaining for selected
      period. TUI ✓ (n/p ± month, T today, r reload).
   5. **Recipes** — list / author / pick active recipe. TUI ✓ (j/k, u
@@ -74,8 +75,8 @@ v2 or later. For status of what's already shipped, see
 | Bulk categorize / tag / hide                             | ✓      | Atomic across all ids; one undo reverts the whole batch; TUI screen ⏳ |
 | Splits (parent/child)                                    | ✓      | CLI ✓ (flag-driven + interactive); TUI screen ⏳                      |
 | Rules (category+bucket+tags, priority, no overwrite)    | ✓      | CLI: ledger rule list/create/delete/apply; TUI rule-create from focused tx ⏳ |
-| Reimbursement linker                                     | ⏳      | Persisted group, Linker screen                                      |
-| Transfer detection (heuristic, persisted groups)        | ⏳      | Interactive confirm, `ledger transfers detect`                       |
+| Reimbursement linker                                     | ✓      | Persisted group ✓; Linker screen shows existing groups (linking via CLI) |
+| Transfer detection (heuristic, persisted groups)        | ✓      | `ledger transfers detect` + `confirm`; TUI Linker screen ✓          |
 | Summary recipes (include/exclude/amortize/net, TOML)    | ✓      | TUI + CLI done; amortize is v2 (TOML loads; service handles include / exclude / net) |
 | Budget (per-bucket allocation, spent vs allocated)       | ✓      | `ledger budget [--month]`; Budget TUI screen ⏳                      |
 | Undo (reverse-last-batch, atomic)                        | ✓      | Audit log captures every change; one method to write                |
@@ -114,8 +115,6 @@ ledger tui                           # placeholder; full TUI ⏳
 ### ⏳ Next
 
 ```
-ledger transfers detect              # heuristic transfer detection
-ledger reimburse link                # manual group linking
 ledger rule list|create|apply        # rules engine
 ledger recipe list|show|use          # summary recipes (CLI done; TUI ✓)
 ledger summary [--recipe R] [--month YYYY-MM]  # done

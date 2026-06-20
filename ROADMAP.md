@@ -121,12 +121,20 @@ decisions, see [docs/adr/](./docs/adr/).
 - `RuleService.Apply()` walks enabled rules in priority order, scans every transaction, calls the existing `AnnotationService` for each match. "No overwrite" semantics: only sets `category` if currently "Unknown", only sets `bucket` if currently `null`, only adds tags that aren't already present. All writes go through AnnotationService so they're atomic and audited; the existing `undo` reverses per-application-batch.
 - CLI: `ledger rule list|create|delete|apply`. `apply` prints "X matched, Y applied, Z skipped" plus per-rule counts.
 
+### Transfer detection + Reimbursement linker
+- `GroupRepository` (already had tables, just lacked a port + impl): create / get / add-member / remove-member / list / list-members.
+- `ReimbursementService.Link` takes exactly 2 transaction IDs, validates currency match and opposite signs, creates a "reimbursement" group, writes 2 audit rows, rebuilds overlay. The overlay then shows the group as a single `reimbursement_group` row with the net amount (e.g. 0 if perfectly reimbursed).
+- `TransferService.Detect` heuristically finds pairs: opposite signs, same absolute amount, same currency, within a 3-day window. Scores by same-date bonus, partner-name match, description-substring match.
+- `TransferService.Confirm` turns a candidate into a persisted "transfer" group.
+- CLI: `ledger transfers detect | confirm <outID> <inID>` and `ledger reimburse link <expenseID> <reimbursementID>`.
+- TUI: Linker screen — shows detected candidates at the top, existing groups below, j/k to navigate, enter to confirm a candidate. Manual reimbursement linking still happens via the CLI for v1 (the TUI can show existing groups but doesn't have a two-pane selection UX yet).
+
 ---
 
 ## ⏳ Next (priority order)
 
-1. **Transfer detection + Linker** — `TransferDetectionService`, `ledger transfers detect`, Linker TUI screen for manual linking. ~2-3 days.
-2. **Manager bulk actions** — `x` to toggle select, `:` for command line (cat/tag/hide/split/undo on the selection). ~half day.
+1. **Manager bulk actions** — `x` to toggle select, `:` for command line (cat/tag/hide/split/undo on the selection). ~half day.
+2. **Distribution** — GoReleaser config + GH release workflow. ~half day.
 
 This order is approximate — exact ordering depends on what the
 operator wants to drive daily. Buckets before rules because the Budget

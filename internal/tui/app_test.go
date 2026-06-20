@@ -31,6 +31,7 @@ func newDeps(t *testing.T) (screens.Deps, func()) {
 		BucketRepo:  persistence.NewBucketRepository(db),
 		AuditRepo:   persistence.NewAuditLogRepository(db),
 		BatchRepo:   persistence.NewImportBatchRepository(db),
+		GroupRepo:   persistence.NewGroupRepository(db),
 		OverlayRepo: persistence.NewOverlayRepository(db),
 		OverlaySvc:  services.NewOverlayService(db.DB),
 		BudgetSvc:   persistence.NewBucketRepository(db),

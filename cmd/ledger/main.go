@@ -309,14 +309,14 @@ func runRebuildOverlay(cmd *cobra.Command, args []string) error {
 }
 
 var categorizeCmd = &cobra.Command{
-	Use:   "categorize <txID> --category NAME",
-	Short: "Set the category on a transaction",
+	Use:   "categorize <txID[,txID,...]> --category NAME",
+	Short: "Set the category on one or more transactions",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runCategorize,
 }
 
 func runCategorize(cmd *cobra.Command, args []string) error {
-	txID, err := parseInt64(args[0])
+	ids, err := parseInt64List(args[0])
 	if err != nil {
 		return err
 	}
@@ -325,13 +325,13 @@ func runCategorize(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--category is required")
 	}
 	return runAnnotation(ctxFromCmd(cmd), func(svc *services.AnnotationService) error {
-		return svc.Categorize(ctxFromCmd(cmd), txID, category)
-	}, fmt.Sprintf("categorized transaction %d → %q", txID, category))
+		return svc.BulkCategorize(ctxFromCmd(cmd), ids, category)
+	}, fmt.Sprintf("categorized %d transaction(s) → %q (%s)", len(ids), category, joinIDs(ids)))
 }
 
 var hideCmd = &cobra.Command{
-	Use:   "hide <txID>",
-	Short: "Hide a transaction from queries (it stays in raw for audit)",
+	Use:   "hide <txID[,txID,...]>",
+	Short: "Hide one or more transactions from queries (they stay in raw for audit)",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runHide,
 }
@@ -339,7 +339,7 @@ var hideCmd = &cobra.Command{
 var hideShow bool
 
 func runHide(cmd *cobra.Command, args []string) error {
-	txID, err := parseInt64(args[0])
+	ids, err := parseInt64List(args[0])
 	if err != nil {
 		return err
 	}
@@ -348,19 +348,19 @@ func runHide(cmd *cobra.Command, args []string) error {
 		hidden = false
 	}
 	return runAnnotation(ctxFromCmd(cmd), func(svc *services.AnnotationService) error {
-		return svc.SetHidden(ctxFromCmd(cmd), txID, hidden)
-	}, fmt.Sprintf("%s transaction %d", ifElse(hidden, "hidden", "unhidden"), txID))
+		return svc.BulkSetHidden(ctxFromCmd(cmd), ids, hidden)
+	}, fmt.Sprintf("%s %d transaction(s) (%s)", ifElse(hidden, "hidden", "unhidden"), len(ids), joinIDs(ids)))
 }
 
 var tagCmd = &cobra.Command{
-	Use:   "tag <txID>",
-	Short: "Add or remove tags on a transaction",
+	Use:   "tag <txID[,txID,...]>",
+	Short: "Add or remove tags on one or more transactions",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runTag,
 }
 
 func runTag(cmd *cobra.Command, args []string) error {
-	txID, err := parseInt64(args[0])
+	ids, err := parseInt64List(args[0])
 	if err != nil {
 		return err
 	}
@@ -370,18 +370,18 @@ func runTag(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("at least one of --add or --remove is required")
 	}
 	return runAnnotation(ctxFromCmd(cmd), func(svc *services.AnnotationService) error {
-		for _, t := range add {
-			if err := svc.AddTag(ctxFromCmd(cmd), txID, t); err != nil {
-				return fmt.Errorf("add %q: %w", t, err)
+		if len(add) > 0 {
+			if err := svc.BulkAddTags(ctxFromCmd(cmd), ids, add); err != nil {
+				return fmt.Errorf("add tags: %w", err)
 			}
 		}
-		for _, t := range remove {
-			if err := svc.RemoveTag(ctxFromCmd(cmd), txID, t); err != nil {
-				return fmt.Errorf("remove %q: %w", t, err)
+		if len(remove) > 0 {
+			if err := svc.BulkRemoveTags(ctxFromCmd(cmd), ids, remove); err != nil {
+				return fmt.Errorf("remove tags: %w", err)
 			}
 		}
 		return nil
-	}, fmt.Sprintf("tagged transaction %d (+%v -%v)", txID, add, remove))
+	}, fmt.Sprintf("tagged %d transaction(s) (+%v -%v) (%s)", len(ids), add, remove, joinIDs(ids)))
 }
 
 func init() {
@@ -451,15 +451,6 @@ func ctxFromCmd(cmd *cobra.Command) context.Context {
 		return ctx
 	}
 	return context.Background()
-}
-
-func parseInt64(s string) (int64, error) {
-	var n int64
-	_, err := fmtSscan(s, &n)
-	if err != nil || n <= 0 {
-		return 0, fmt.Errorf("invalid transaction id: %q", s)
-	}
-	return n, nil
 }
 
 func ifElse[T any](cond bool, a, b T) T {

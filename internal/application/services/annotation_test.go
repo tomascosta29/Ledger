@@ -490,3 +490,221 @@ func TestUndo(t *testing.T) {
 		}
 	})
 }
+
+func TestBulkCategorize(t *testing.T) {
+	t.Run("multiple ids get the category and share one audit timestamp", func(t *testing.T) {
+		env := newAnnotationTestEnv(t)
+		defer env.cleanup()
+		id1 := env.seedTx(t)
+		id2 := env.seedTx(t)
+		id3 := env.seedTx(t)
+
+		if err := env.annSvc.BulkCategorize(context.Background(), []int64{id1, id2, id3}, "want"); err != nil {
+			t.Fatalf("bulk categorize: %v", err)
+		}
+
+		for _, id := range []int64{id1, id2, id3} {
+			txn, _ := env.txRepo.GetByID(context.Background(), id)
+			if txn.Category != "want" {
+				t.Fatalf("txn %d category = %q, want %q", id, txn.Category, "want")
+			}
+		}
+
+		// All three audit rows share the same timestamp (single batch).
+		entries, _ := env.auditRepo.Query(context.Background(), ports.AuditEntryFilter{Action: strPtr("categorize")})
+		if len(entries) != 3 {
+			t.Fatalf("expected 3 categorize audit rows, got %d", len(entries))
+		}
+		ts0 := entries[0].CreatedAt
+		for _, e := range entries[1:] {
+			if !e.CreatedAt.Equal(ts0) {
+				t.Fatalf("expected shared timestamp %v, got %v", ts0, e.CreatedAt)
+			}
+		}
+
+		// Overlay reflects the new category.
+		rows, _ := env.ovRepo.FindAll(context.Background(), ports.OverlayFindOptions{})
+		if len(rows) != 3 {
+			t.Fatalf("expected 3 overlay rows, got %d", len(rows))
+		}
+		for _, r := range rows {
+			if r.Category != "want" {
+				t.Fatalf("overlay category = %q, want %q", r.Category, "want")
+			}
+		}
+	})
+
+	t.Run("dedupes ids and skips no-op rows", func(t *testing.T) {
+		env := newAnnotationTestEnv(t)
+		defer env.cleanup()
+		id1 := env.seedTx(t)
+		id2 := env.seedTx(t)
+		// id1 already "Unknown"; bulk-categorizing to "Unknown" is a no-op for it.
+		if err := env.annSvc.BulkCategorize(context.Background(), []int64{id1, id2, id1}, "Unknown"); err != nil {
+			t.Fatalf("bulk categorize: %v", err)
+		}
+		entries, _ := env.auditRepo.Query(context.Background(), ports.AuditEntryFilter{Action: strPtr("categorize")})
+		if len(entries) != 0 {
+			t.Fatalf("expected 0 audit rows for all no-ops, got %d", len(entries))
+		}
+	})
+
+	t.Run("empty ids is an error", func(t *testing.T) {
+		env := newAnnotationTestEnv(t)
+		defer env.cleanup()
+		if err := env.annSvc.BulkCategorize(context.Background(), nil, "want"); err == nil {
+			t.Fatal("expected error for empty id list")
+		}
+	})
+
+	t.Run("rollback on missing id", func(t *testing.T) {
+		env := newAnnotationTestEnv(t)
+		defer env.cleanup()
+		id1 := env.seedTx(t)
+		missing := id1 + 9999
+		err := env.annSvc.BulkCategorize(context.Background(), []int64{id1, missing}, "want")
+		if err == nil {
+			t.Fatal("expected error from missing id")
+		}
+		txn, _ := env.txRepo.GetByID(context.Background(), id1)
+		if txn.Category != "Unknown" {
+			t.Fatalf("expected id1 unchanged after rollback, got category %q", txn.Category)
+		}
+		entries, _ := env.auditRepo.Query(context.Background(), ports.AuditEntryFilter{Action: strPtr("categorize")})
+		if len(entries) != 0 {
+			t.Fatalf("expected 0 audit rows after rollback, got %d", len(entries))
+		}
+	})
+}
+
+func TestBulkSetHidden(t *testing.T) {
+	t.Run("multiple ids get the hidden flag and share one audit timestamp", func(t *testing.T) {
+		env := newAnnotationTestEnv(t)
+		defer env.cleanup()
+		id1 := env.seedTx(t)
+		id2 := env.seedTx(t)
+
+		if err := env.annSvc.BulkSetHidden(context.Background(), []int64{id1, id2}, true); err != nil {
+			t.Fatalf("bulk hide: %v", err)
+		}
+		for _, id := range []int64{id1, id2} {
+			txn, _ := env.txRepo.GetByID(context.Background(), id)
+			if !txn.IsHidden {
+				t.Fatalf("txn %d not hidden", id)
+			}
+		}
+		entries, _ := env.auditRepo.Query(context.Background(), ports.AuditEntryFilter{Action: strPtr("visibility")})
+		if len(entries) != 2 {
+			t.Fatalf("expected 2 visibility audit rows, got %d", len(entries))
+		}
+		if !entries[0].CreatedAt.Equal(entries[1].CreatedAt) {
+			t.Fatalf("audit rows do not share timestamp")
+		}
+	})
+}
+
+func TestBulkAddTags(t *testing.T) {
+	t.Run("adds tags to each transaction and shares one audit timestamp", func(t *testing.T) {
+		env := newAnnotationTestEnv(t)
+		defer env.cleanup()
+		id1 := env.seedTx(t)
+		id2 := env.seedTx(t)
+
+		if err := env.annSvc.BulkAddTags(context.Background(), []int64{id1, id2}, []string{"rent", "monthly"}); err != nil {
+			t.Fatalf("bulk add tags: %v", err)
+		}
+		for _, id := range []int64{id1, id2} {
+			tags, _ := env.tagRepo.ListByTransaction(context.Background(), id)
+			if len(tags) != 2 || tags[0] != "monthly" || tags[1] != "rent" {
+				t.Fatalf("txn %d tags = %v, want [monthly rent]", id, tags)
+			}
+		}
+		entries, _ := env.auditRepo.Query(context.Background(), ports.AuditEntryFilter{Action: strPtr("tag")})
+		if len(entries) != 2 {
+			t.Fatalf("expected 2 tag audit rows, got %d", len(entries))
+		}
+		if !entries[0].CreatedAt.Equal(entries[1].CreatedAt) {
+			t.Fatalf("audit rows do not share timestamp")
+		}
+	})
+
+	t.Run("skips already-present tags", func(t *testing.T) {
+		env := newAnnotationTestEnv(t)
+		defer env.cleanup()
+		id := env.seedTx(t)
+		if err := env.annSvc.AddTag(context.Background(), id, "rent"); err != nil {
+			t.Fatalf("seed tag: %v", err)
+		}
+		if err := env.annSvc.BulkAddTags(context.Background(), []int64{id}, []string{"rent", "monthly"}); err != nil {
+			t.Fatalf("bulk add tags: %v", err)
+		}
+		tags, _ := env.tagRepo.ListByTransaction(context.Background(), id)
+		if len(tags) != 2 || tags[0] != "monthly" || tags[1] != "rent" {
+			t.Fatalf("tags = %v, want [monthly rent]", tags)
+		}
+		// Two audit rows total: one from the seed AddTag("rent"), one from the bulk.
+		// The bulk row's new_value must include both "rent" and "monthly".
+		entries, _ := env.auditRepo.Query(context.Background(), ports.AuditEntryFilter{Action: strPtr("tag")})
+		if len(entries) != 2 {
+			t.Fatalf("expected 2 tag audit rows (seed + bulk), got %d", len(entries))
+		}
+		var bulk *entities.AuditEntry
+		for _, e := range entries {
+			if e.NewValue != nil && *e.NewValue == "rent,monthly" {
+				bulk = e
+			}
+		}
+		if bulk == nil {
+			t.Fatalf("expected one audit row with new_value=monthly,rent, got %+v", entries)
+		}
+	})
+}
+
+func TestBulkRemoveTags(t *testing.T) {
+	t.Run("removes tags from each transaction and shares one audit timestamp", func(t *testing.T) {
+		env := newAnnotationTestEnv(t)
+		defer env.cleanup()
+		id1 := env.seedTx(t)
+		id2 := env.seedTx(t)
+		for _, id := range []int64{id1, id2} {
+			if err := env.annSvc.AddTag(context.Background(), id, "rent"); err != nil {
+				t.Fatalf("seed: %v", err)
+			}
+			if err := env.annSvc.AddTag(context.Background(), id, "monthly"); err != nil {
+				t.Fatalf("seed: %v", err)
+			}
+		}
+
+		if err := env.annSvc.BulkRemoveTags(context.Background(), []int64{id1, id2}, []string{"rent"}); err != nil {
+			t.Fatalf("bulk remove tags: %v", err)
+		}
+		for _, id := range []int64{id1, id2} {
+			tags, _ := env.tagRepo.ListByTransaction(context.Background(), id)
+			if len(tags) != 1 || tags[0] != "monthly" {
+				t.Fatalf("txn %d tags = %v, want [monthly]", id, tags)
+			}
+		}
+	})
+}
+
+func TestUndoBulkCategorize(t *testing.T) {
+	env := newAnnotationTestEnv(t)
+	defer env.cleanup()
+	id1 := env.seedTx(t)
+	id2 := env.seedTx(t)
+	id3 := env.seedTx(t)
+
+	if err := env.annSvc.BulkCategorize(context.Background(), []int64{id1, id2, id3}, "want"); err != nil {
+		t.Fatalf("bulk categorize: %v", err)
+	}
+	// One undo must revert the whole batch.
+	if err := env.annSvc.Undo(context.Background()); err != nil {
+		t.Fatalf("undo: %v", err)
+	}
+	for _, id := range []int64{id1, id2, id3} {
+		txn, _ := env.txRepo.GetByID(context.Background(), id)
+		if txn.Category != "Unknown" {
+			t.Fatalf("txn %d category after undo = %q, want Unknown", id, txn.Category)
+		}
+	}
+}

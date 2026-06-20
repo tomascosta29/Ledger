@@ -205,6 +205,219 @@ func joinTags(s []string) string {
 	return out
 }
 
+func (s *AnnotationService) BulkCategorize(ctx context.Context, txIDs []int64, category string) error {
+	if category == "" {
+		return errors.New("category is empty")
+	}
+	if len(txIDs) == 0 {
+		return errors.New("no transaction ids provided")
+	}
+	uniqueIDs := dedupIDs(txIDs)
+
+	oldByID := make(map[int64]string, len(uniqueIDs))
+	for _, id := range uniqueIDs {
+		txn, err := s.deps.TxRepo.GetByID(ctx, id)
+		if err != nil {
+			return fmt.Errorf("load transaction %d: %w", id, err)
+		}
+		oldByID[id] = txn.Category
+	}
+
+	return s.runTx(ctx, func(tx *sql.Tx) error {
+		wrote := false
+		now := s.deps.Now()
+		for _, id := range uniqueIDs {
+			if oldByID[id] == category {
+				continue
+			}
+			if err := s.deps.TxRepo.SetCategoryDBTX(ctx, tx, id, category); err != nil {
+				return err
+			}
+			entry := &entities.AuditEntry{
+				TableName: "transactions",
+				RecordID:  id,
+				Action:    entities.AuditActionCategorize,
+				Field:     strPtr("category"),
+				OldValue:  strPtr(oldByID[id]),
+				NewValue:  strPtr(category),
+				CreatedAt: now,
+			}
+			if _, err := s.deps.AuditRepo.AppendDBTX(ctx, tx, entry); err != nil {
+				return err
+			}
+			wrote = true
+		}
+		if !wrote {
+			return nil
+		}
+		return s.deps.OverlaySvc.RebuildWithTx(ctx, tx)
+	})
+}
+
+func (s *AnnotationService) BulkSetHidden(ctx context.Context, txIDs []int64, hidden bool) error {
+	if len(txIDs) == 0 {
+		return errors.New("no transaction ids provided")
+	}
+	uniqueIDs := dedupIDs(txIDs)
+
+	oldByID := make(map[int64]bool, len(uniqueIDs))
+	for _, id := range uniqueIDs {
+		txn, err := s.deps.TxRepo.GetByID(ctx, id)
+		if err != nil {
+			return fmt.Errorf("load transaction %d: %w", id, err)
+		}
+		oldByID[id] = txn.IsHidden
+	}
+
+	return s.runTx(ctx, func(tx *sql.Tx) error {
+		wrote := false
+		now := s.deps.Now()
+		for _, id := range uniqueIDs {
+			if oldByID[id] == hidden {
+				continue
+			}
+			if err := s.deps.TxRepo.SetHiddenDBTX(ctx, tx, id, hidden); err != nil {
+				return err
+			}
+			entry := &entities.AuditEntry{
+				TableName: "transactions",
+				RecordID:  id,
+				Action:    entities.AuditActionVisibility,
+				Field:     strPtr("is_hidden"),
+				OldValue:  boolStrPtr(oldByID[id]),
+				NewValue:  boolStrPtr(hidden),
+				CreatedAt: now,
+			}
+			if _, err := s.deps.AuditRepo.AppendDBTX(ctx, tx, entry); err != nil {
+				return err
+			}
+			wrote = true
+		}
+		if !wrote {
+			return nil
+		}
+		return s.deps.OverlaySvc.RebuildWithTx(ctx, tx)
+	})
+}
+
+func (s *AnnotationService) BulkAddTags(ctx context.Context, txIDs []int64, tags []string) error {
+	return s.bulkTag(ctx, txIDs, tags, true)
+}
+
+func (s *AnnotationService) BulkRemoveTags(ctx context.Context, txIDs []int64, tags []string) error {
+	return s.bulkTag(ctx, txIDs, tags, false)
+}
+
+func (s *AnnotationService) bulkTag(ctx context.Context, txIDs []int64, tags []string, add bool) error {
+	if len(txIDs) == 0 {
+		return errors.New("no transaction ids provided")
+	}
+	if len(tags) == 0 {
+		return errors.New("no tags provided")
+	}
+	uniqueIDs := dedupIDs(txIDs)
+	uniqueTags := dedupStrings(tags)
+
+	oldTagsByID := make(map[int64][]string, len(uniqueIDs))
+	for _, id := range uniqueIDs {
+		existing, err := s.deps.TagRepo.ListByTransaction(ctx, id)
+		if err != nil {
+			return fmt.Errorf("load tags for txn %d: %w", id, err)
+		}
+		oldTagsByID[id] = existing
+	}
+
+	return s.runTx(ctx, func(tx *sql.Tx) error {
+		wrote := false
+		now := s.deps.Now()
+		for _, id := range uniqueIDs {
+			old := oldTagsByID[id]
+			var next []string
+			if add {
+				next = append([]string{}, old...)
+				for _, t := range uniqueTags {
+					if !contains(next, t) {
+						next = append(next, t)
+					}
+				}
+			} else {
+				next = make([]string, 0, len(old))
+				for _, t := range old {
+					if !contains(uniqueTags, t) {
+						next = append(next, t)
+					}
+				}
+			}
+			if stringSlicesEqual(old, next) {
+				continue
+			}
+			if err := s.deps.TagRepo.ClearDBTX(ctx, tx, id); err != nil {
+				return fmt.Errorf("clear tags for txn %d: %w", id, err)
+			}
+			for _, t := range next {
+				if err := s.deps.TagRepo.AddDBTX(ctx, tx, id, t); err != nil {
+					return fmt.Errorf("add tag %q to txn %d: %w", t, id, err)
+				}
+			}
+			entry := &entities.AuditEntry{
+				TableName: "transactions",
+				RecordID:  id,
+				Action:    entities.AuditActionTag,
+				Field:     strPtr("tags"),
+				OldValue:  strPtr(joinTags(old)),
+				NewValue:  strPtr(joinTags(next)),
+				CreatedAt: now,
+			}
+			if _, err := s.deps.AuditRepo.AppendDBTX(ctx, tx, entry); err != nil {
+				return err
+			}
+			wrote = true
+		}
+		if !wrote {
+			return nil
+		}
+		return s.deps.OverlaySvc.RebuildWithTx(ctx, tx)
+	})
+}
+
+func dedupIDs(ids []int64) []int64 {
+	seen := make(map[int64]struct{}, len(ids))
+	out := make([]int64, 0, len(ids))
+	for _, id := range ids {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
+}
+
+func dedupStrings(ss []string) []string {
+	seen := make(map[string]struct{}, len(ss))
+	out := make([]string, 0, len(ss))
+	for _, s := range ss {
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	return out
+}
+
+func stringSlicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func (s *AnnotationService) Undo(ctx context.Context) error {
 	return s.runTx(ctx, func(tx *sql.Tx) error {
 		ts, err := s.deps.AuditRepo.FindLatestUndoneTimestampDBTX(ctx, tx)

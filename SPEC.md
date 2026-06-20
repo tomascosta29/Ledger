@@ -69,7 +69,7 @@ v2 or later. For status of what's already shipped, see
 | -------------------------------------------------------- | ------ | -------------------------------------------------------------------- |
 | CSV import (Erste + Revolut)                             | ✓      | `ledger import <file> --profile NAME [--dry-run]`                    |
 | Manual `add`                                             | ⏳      | CLI subcommand + TUI modal                                           |
-| Bulk categorize / tag / hide                             | 🚧     | Single-txn verbs ✓; bulk multi-txn CLI ⏳; TUI screen ⏳              |
+| Bulk categorize / tag / hide                             | ✓      | Atomic across all ids; one undo reverts the whole batch; TUI screen ⏳ |
 | Splits (parent/child)                                    | ⏳      | Schema + overlay support ✓; CLI + TUI ⏳                            |
 | Rules (category+bucket+tags, priority, no overwrite)    | ⏳      | Author via Categorizer or CLI                                       |
 | Reimbursement linker                                     | ⏳      | Persisted group, Linker screen                                      |
@@ -97,9 +97,9 @@ ledger init                          # create DB + run migrations
 ledger import <file> --profile NAME  # CSV ingest (Erste, Revolut, custom TOML)
 ledger list [--limit N] [--category X] [--since YYYY-MM-DD]
 ledger rebuild-overlay               # full overlay rebuild (drift recovery)
-ledger categorize <txID> --category X
-ledger hide <txID> [--unhide]
-ledger tag <txID> --add foo,bar [--remove baz]
+ledger categorize <id1,id2,...> --category X
+ledger hide <id1,id2,...> [--unhide]
+ledger tag <id1,id2,...> --add foo,bar [--remove baz]
 ledger undo                          # reverse last batch
 ledger tui                           # placeholder; full TUI ⏳
 ```
@@ -109,9 +109,6 @@ ledger tui                           # placeholder; full TUI ⏳
 ```
 ledger add                           # manual transaction entry
 ledger show <txID>                   # transaction detail
-ledger categorize <id1,id2,...>      # bulk (today: one id at a time)
-ledger tag <id1,id2,...> --add       # bulk tag
-ledger hide <id1,id2,...>            # bulk hide
 ledger split <txID>                  # split into N children
 ledger history [--tx-id N]           # audit log viewer
 ledger transfers detect              # heuristic transfer detection

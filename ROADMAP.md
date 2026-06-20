@@ -12,6 +12,10 @@ decisions, see [docs/adr/](./docs/adr/).
 - **⏳ Next** — queued for the next round of work, ordered top-down.
 - **🔮 v2** — deferred until v1 is in real use.
 
+**v1 is done.** All 18 v1 features in SPEC.md are shipped. v1 + v2
+list in the table below. Next-round items (operational quality-of-
+life, not in the v1 contract) are at the bottom.
+
 ---
 
 ## ✓ Done
@@ -137,19 +141,15 @@ decisions, see [docs/adr/](./docs/adr/).
 - `U` calls `AnnotationService.Undo` (reverts the most recent batch regardless of selection).
 - All four action keys use the same atomic-annotation path as the CLI, so audit + overlay rebuild + undo are unchanged.
 
----
-
-## ⏳ Next (priority order)
-
-1. **Distribution** — GoReleaser config + GH release workflow. ~half day.
-
-This order is approximate — exact ordering depends on what the
-operator wants to drive daily. Buckets before rules because the Budget
-screen is a more compelling daily-driver than rule authoring.
+### Distribution
+- `.goreleaser.yml`: cross-compile `ledger` to linux/darwin/windows on amd64+arm64 with CGO_ENABLED=0. Tar.gz for *nix, zip for Windows. Checksum file. Changelog from conventional git history.
+- `.github/workflows/release.yml`: runs `goreleaser release --clean` on tag push (`v*`).
+- `.github/workflows/ci.yml`: on push/PR to main — `go build`, `go vet`, `go test ./...` with Go 1.25.
+- ldflags inject version / commit / date into the existing `version` package var so `ledger --version` reflects the release.
 
 ---
 
-## 🔮 v2 (deferred until v1 ships and is in real use)
+## 🔮 v2 (deferred until v1 is in real use)
 
 From [SPEC.md](./SPEC.md) Section 4:
 
@@ -158,6 +158,8 @@ From [SPEC.md](./SPEC.md) Section 4:
 - **Explain** — "why did rule X match transaction Y?"
 - **Doctor** — data health checks (drift detection on the overlay is one of these).
 - **Wizard / Shell / Convert / Export** — convenience features that are easy to add later but not blocking the daily loop.
+- **Recipe amortize** — schema + summary support for spreading a single charge across N months.
+- **TUI Manager command line** — `:` for `cat <cat>`, `tag --add foo`, etc. on the current selection. Currently the bulk actions are single-key; a textual command line is a quality-of-life add.
 
 From SPEC Section 2:
 

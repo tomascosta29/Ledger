@@ -39,50 +39,50 @@ v2 or later. For status of what's already shipped, see
 - ✓ See [ADR 0001](./docs/adr/0001-sqlite-connection-strategy.md) for the
   connection-pool decision (MaxOpenConns=1).
 
-## 3. TUI 🚧
+## 3. TUI ✓
 
-- 🚧 Bubble Tea + Bubbles + Lipgloss.
-- 🚧 **Router model**: parent owns current screen + status bar; each screen is
+- ✓ Bubble Tea + Bubbles + Lipgloss.
+- ✓ **Router model**: parent owns current screen + status bar; each screen is
   a self-contained `tea.Model`.
-- 🚧 **5 screens**, navigated by `1..5`:
+- ✓ **5 screens**, navigated by `1..5`:
   1. **Manager** — transaction list, filter DSL (`desc:`, `partner:`,
      `iban:`, `min:`, `max:`, `sign:`, `category:`, `bucket:`, `id:`).
-     TUI ✓; bulk select (`x`/`X`), then `C` (categorize), `T` (tag),
-     `H` (hide), `U` (undo).
+     Bulk select (`x`/`X`), then `C` (categorize), `T` (tag), `H` (hide),
+     `U` (undo).
   2. **Categorizer** — unknown transactions, in-place c (category) / b
-     (bucket) / t (tag) keys with single-character prompts. Auto-reloads
-     after each action.
-  3. **Linker** — expense pane + reimbursement pane, link into persisted
-     group. TUI ✓ (transfer candidates + existing groups; j/k/enter to
-     confirm). Manual reimbursement link: `ledger reimburse link <id1> <id2>`.
+     (bucket) / t (tag) keys with single-character prompts.
+     Auto-reloads after each action.
+  3. **Linker** — transfer candidates at the top, existing groups below;
+     j/k to navigate, enter to confirm a candidate. Manual reimbursement
+     link is via the CLI.
   4. **Budget** — per-bucket allocation + spent vs remaining for selected
-     period. TUI ✓ (n/p ± month, T today, r reload).
-  5. **Recipes** — list / author / pick active recipe. TUI ✓ (j/k, u
-     use active); CLI: `ledger recipe list|show|use|new`.
-- 🚧 **Status bar** (always visible): DB path, current screen, mode badge
+     period. n/p ± month, T today, r reload.
+  5. **Recipes** — list, j/k to navigate, `u` to set the focused recipe
+     as active.
+- ✓ **Status bar** (always visible): DB path, current screen, mode badge
   (`NORMAL` / `COMMAND` / `HELP`), transient status message.
-- 🚧 **Keybindings**: vim-style modal.
-  - Normal: `j/k/g/G` nav, `/` filter, `x` toggle select, `:` command line,
-    `?` help, `q` quit, `1..5` jump to screen.
+- ✓ **Keybindings**: vim-style modal.
+  - Normal: `j/k/g/G` nav, `/` filter, `x` toggle select, `?` help, `q`
+    quit, `1..5` jump to screen.
   - Help: any key dismisses.
-- 🚧 `?` opens a help overlay with all bindings.
+- ✓ `?` opens a help overlay with all bindings.
 
 ## 4. Feature scope (v1)
 
 | Feature                                                  | Status | Notes                                                                |
 | -------------------------------------------------------- | ------ | -------------------------------------------------------------------- |
 | CSV import (Erste + Revolut)                             | ✓      | `ledger import <file> --profile NAME [--dry-run]`                    |
-| Manual `add`                                             | ✓      | CLI done; TUI modal ⏳                                               |
+| Manual `add`                                             | ✓      | `ledger add --date D --amount A --currency C --description D ...`   |
 | Buckets (per-bucket allocation, assigned to txns)       | ✓      | `--bucket` on categorize; `ledger bucket list|create|...`; `ledger budget [--month]` |
-| Bulk categorize / tag / hide                             | ✓      | Atomic across all ids; one undo reverts the whole batch; TUI screen ⏳ |
-| Splits (parent/child)                                    | ✓      | CLI ✓ (flag-driven + interactive); TUI screen ⏳                      |
-| Rules (category+bucket+tags, priority, no overwrite)    | ✓      | CLI: ledger rule list/create/delete/apply; TUI rule-create from focused tx ⏳ |
-| Reimbursement linker                                     | ✓      | Persisted group ✓; Linker screen shows existing groups (linking via CLI) |
-| Transfer detection (heuristic, persisted groups)        | ✓      | `ledger transfers detect` + `confirm`; TUI Linker screen ✓          |
+| Bulk categorize / tag / hide                             | ✓      | Atomic across all ids; one undo reverts the whole batch. TUI Manager: `x`/`X` select, `C`/`T`/`H`/`U` apply |
+| Splits (parent/child)                                    | ✓      | `ledger split <txID> --child "amount|desc"` (interactive also). TUI: parent + children show in Manager / Budget |
+| Rules (category+bucket+tags, priority, no overwrite)    | ✓      | `ledger rule list\|create\|delete\|apply`; `RuleService.Apply` walks enabled rules by priority |
+| Reimbursement linker                                     | ✓      | `ledger reimburse link <expenseID> <reimbursementID>`; overlay shows the group as a single row with net amount |
+| Transfer detection (heuristic, persisted groups)        | ✓      | `ledger transfers detect` + `confirm`; TUI Linker screen has candidates + groups |
 | Summary recipes (include/exclude/amortize/net, TOML)    | ✓      | TUI + CLI done; amortize is v2 (TOML loads; service handles include / exclude / net) |
-| Budget (per-bucket allocation, spent vs allocated)       | ✓      | `ledger budget [--month]`; Budget TUI screen ⏳                      |
+| Budget (per-bucket allocation, spent vs allocated)       | ✓      | `ledger budget [--month]`; TUI Budget screen with period nav         |
 | Undo (reverse-last-batch, atomic)                        | ✓      | Audit log captures every change; one method to write                |
-| History (audit log viewer)                               | ✓      | `ledger history` command                                            |
+| History (audit log viewer)                               | ✓      | `ledger history [--tx-id N] [--action A] [--limit N]`                |
 | Multi-currency grouping                                  | ✓      | No FX, no config                                                     |
 | Overlay (materialized read model)                       | ✓      | See [ADR 0002](./docs/adr/0002-overlay-rebuild-strategy.md)        |
 | Tag storage as join table                                | ✓      | See [ADR 0004](./docs/adr/0004-tag-storage.md)                      |

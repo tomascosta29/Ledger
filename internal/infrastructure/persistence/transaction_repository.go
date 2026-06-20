@@ -25,10 +25,10 @@ func (r *TransactionRepository) Insert(ctx context.Context, tx *entities.Transac
 	res, err := r.db.ExecContext(ctx, `
 		INSERT INTO transactions (
 			effective_date, amount_minor, currency, description,
-			partner_name, partner_iban, import_batch_id, source_hash,
+			partner_name, partner_iban, import_batch_id, parent_transaction_id, source_hash,
 			raw_data, raw_description, category,
 			exclude_from_reports, is_hidden, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		tx.EffectiveDate,
 		tx.Amount.Amount,
@@ -37,6 +37,7 @@ func (r *TransactionRepository) Insert(ctx context.Context, tx *entities.Transac
 		nullStr(tx.PartnerName),
 		nullStr(tx.PartnerIBAN),
 		nullInt64(tx.ImportBatchID),
+		nullInt64(tx.ParentTxnID),
 		tx.SourceHash,
 		nullBytes(tx.RawData),
 		nullStr(tx.RawDescription),
@@ -70,10 +71,10 @@ func (r *TransactionRepository) InsertBatch(ctx context.Context, txs []*entities
 	stmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO transactions (
 			effective_date, amount_minor, currency, description,
-			partner_name, partner_iban, import_batch_id, source_hash,
+			partner_name, partner_iban, import_batch_id, parent_transaction_id, source_hash,
 			raw_data, raw_description, category,
 			exclude_from_reports, is_hidden, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("prepare: %w", err)
@@ -90,6 +91,7 @@ func (r *TransactionRepository) InsertBatch(ctx context.Context, txs []*entities
 			nullStr(t.PartnerName),
 			nullStr(t.PartnerIBAN),
 			nullInt64(t.ImportBatchID),
+			nullInt64(t.ParentTxnID),
 			t.SourceHash,
 			nullBytes(t.RawData),
 			nullStr(t.RawDescription),
@@ -113,6 +115,93 @@ func (r *TransactionRepository) InsertBatch(ctx context.Context, txs []*entities
 		return nil, fmt.Errorf("commit: %w", err)
 	}
 	return ids, nil
+}
+
+const selectAllColumnsSQL = `SELECT
+	id, effective_date, amount_minor, currency, description,
+	partner_name, partner_iban, import_batch_id, parent_transaction_id, source_hash,
+	raw_data, raw_description, category,
+	exclude_from_reports, is_hidden, created_at, updated_at
+FROM transactions`
+
+var allowedSortColumns = map[string]bool{
+	"effective_date": true,
+	"amount_minor":   true,
+	"id":             true,
+}
+
+var allowedUpdateColumns = map[string]bool{
+	"effective_date":       true,
+	"amount_minor":         true,
+	"currency":             true,
+	"description":          true,
+	"partner_name":         true,
+	"partner_iban":         true,
+	"category":             true,
+	"exclude_from_reports": true,
+	"is_hidden":            true,
+	"parent_transaction_id": true,
+}
+
+type scanner interface {
+	Scan(dest ...any) error
+}
+
+func scanTransaction(s scanner) (*entities.Transaction, error) {
+	var (
+		id                int64
+		effDate           string
+		amountMinor       int64
+		currencyStr       string
+		description       string
+		partnerName       sql.NullString
+		partnerIBAN       sql.NullString
+		importBatchID     sql.NullInt64
+		parentTxnID       sql.NullInt64
+		sourceHash        string
+		rawData           []byte
+		rawDescription    sql.NullString
+		category          string
+		excludeFromRep    int
+		isHidden          int
+		createdAtStr      string
+		updatedAtStr      string
+	)
+	err := s.Scan(
+		&id, &effDate, &amountMinor, &currencyStr, &description,
+		&partnerName, &partnerIBAN, &importBatchID, &parentTxnID, &sourceHash,
+		&rawData, &rawDescription, &category,
+		&excludeFromRep, &isHidden, &createdAtStr, &updatedAtStr,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ports.ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("scan transaction: %w", err)
+	}
+	cur := valueobjects.Currency(currencyStr)
+	amount, err := valueobjects.New(amountMinor, cur)
+	if err != nil {
+		return nil, fmt.Errorf("amount: %w", err)
+	}
+	return &entities.Transaction{
+		ID:                 id,
+		EffectiveDate:      effDate,
+		Amount:             amount,
+		Description:        description,
+		PartnerName:        nullStringToPtr(partnerName),
+		PartnerIBAN:        nullStringToPtr(partnerIBAN),
+		ImportBatchID:      nullInt64ToPtr(importBatchID),
+		ParentTxnID:        nullInt64ToPtr(parentTxnID),
+		SourceHash:         sourceHash,
+		RawData:            rawData,
+		RawDescription:     nullStringToPtr(rawDescription),
+		Category:           category,
+		ExcludeFromReports: excludeFromRep != 0,
+		IsHidden:           isHidden != 0,
+		CreatedAt:          parseISO(createdAtStr),
+		UpdatedAt:          parseISO(updatedAtStr),
+	}, nil
 }
 
 func (r *TransactionRepository) GetByID(ctx context.Context, id int64) (*entities.Transaction, error) {
@@ -227,90 +316,6 @@ func (r *TransactionRepository) Count(ctx context.Context, filters ports.TxFilte
 		return 0, fmt.Errorf("count: %w", err)
 	}
 	return n, nil
-}
-
-const selectAllColumnsSQL = `SELECT
-	id, effective_date, amount_minor, currency, description,
-	partner_name, partner_iban, import_batch_id, source_hash,
-	raw_data, raw_description, category,
-	exclude_from_reports, is_hidden, created_at, updated_at
-FROM transactions`
-
-var allowedSortColumns = map[string]bool{
-	"effective_date": true,
-	"amount_minor":   true,
-	"id":             true,
-}
-
-var allowedUpdateColumns = map[string]bool{
-	"effective_date":       true,
-	"amount_minor":         true,
-	"currency":             true,
-	"description":          true,
-	"partner_name":         true,
-	"partner_iban":         true,
-	"category":             true,
-	"exclude_from_reports": true,
-	"is_hidden":            true,
-}
-
-type scanner interface {
-	Scan(dest ...any) error
-}
-
-func scanTransaction(s scanner) (*entities.Transaction, error) {
-	var (
-		id                int64
-		effDate           string
-		amountMinor       int64
-		currencyStr       string
-		description       string
-		partnerName       sql.NullString
-		partnerIBAN       sql.NullString
-		importBatchID     sql.NullInt64
-		sourceHash        string
-		rawData           []byte
-		rawDescription    sql.NullString
-		category          string
-		excludeFromRep    int
-		isHidden          int
-		createdAtStr      string
-		updatedAtStr      string
-	)
-	err := s.Scan(
-		&id, &effDate, &amountMinor, &currencyStr, &description,
-		&partnerName, &partnerIBAN, &importBatchID, &sourceHash,
-		&rawData, &rawDescription, &category,
-		&excludeFromRep, &isHidden, &createdAtStr, &updatedAtStr,
-	)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ports.ErrNotFound
-	}
-	if err != nil {
-		return nil, fmt.Errorf("scan transaction: %w", err)
-	}
-	cur := valueobjects.Currency(currencyStr)
-	amount, err := valueobjects.New(amountMinor, cur)
-	if err != nil {
-		return nil, fmt.Errorf("amount: %w", err)
-	}
-	return &entities.Transaction{
-		ID:                 id,
-		EffectiveDate:      effDate,
-		Amount:             amount,
-		Description:        description,
-		PartnerName:        nullStringToPtr(partnerName),
-		PartnerIBAN:        nullStringToPtr(partnerIBAN),
-		ImportBatchID:      nullInt64ToPtr(importBatchID),
-		SourceHash:         sourceHash,
-		RawData:            rawData,
-		RawDescription:     nullStringToPtr(rawDescription),
-		Category:           category,
-		ExcludeFromReports: excludeFromRep != 0,
-		IsHidden:           isHidden != 0,
-		CreatedAt:          parseISO(createdAtStr),
-		UpdatedAt:          parseISO(updatedAtStr),
-	}, nil
 }
 
 func buildWhere(f ports.TxFilters) (string, []any) {

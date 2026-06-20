@@ -9,6 +9,7 @@ import (
 
 	"github.com/tomascosta29/Ledger/internal/application/commands"
 	"github.com/tomascosta29/Ledger/internal/application/ports"
+	"github.com/tomascosta29/Ledger/internal/application/services"
 	"github.com/tomascosta29/Ledger/internal/domain/entities"
 	"github.com/tomascosta29/Ledger/internal/infrastructure/persistence"
 )
@@ -26,10 +27,11 @@ func newTestDeps(t *testing.T) (commands.ImportDeps, func()) {
 	}
 	now := time.Date(2026, 6, 20, 12, 0, 0, 0, time.UTC)
 	deps := commands.ImportDeps{
-		TxRepo:    persistence.NewTransactionRepository(db),
-		BatchRepo: persistence.NewImportBatchRepository(db),
-		AuditRepo: persistence.NewAuditLogRepository(db),
-		Now:       func() time.Time { return now },
+		TxRepo:     persistence.NewTransactionRepository(db),
+		BatchRepo:  persistence.NewImportBatchRepository(db),
+		AuditRepo:  persistence.NewAuditLogRepository(db),
+		OverlaySvc: services.NewOverlayService(db.DB),
+		Now:        func() time.Time { return now },
 	}
 	return deps, func() { _ = db.Close() }
 }

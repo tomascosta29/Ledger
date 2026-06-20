@@ -10,6 +10,7 @@ import (
 
 	"github.com/tomascosta29/Ledger/internal/application/commands"
 	"github.com/tomascosta29/Ledger/internal/application/ports"
+	"github.com/tomascosta29/Ledger/internal/application/services"
 	"github.com/tomascosta29/Ledger/internal/infrastructure/persistence"
 )
 
@@ -39,6 +40,7 @@ func init() {
 	rootCmd.AddCommand(initCmd)
 	rootCmd.AddCommand(importCmd)
 	rootCmd.AddCommand(listCmd)
+	rootCmd.AddCommand(rebuildOverlayCmd)
 	importCmd.Flags().StringVarP(&importProfile, "profile", "p", "", "bank profile (erste, revolut, or custom TOML)")
 	importCmd.Flags().BoolVar(&importDryRun, "dry-run", false, "parse and preview without writing to the DB")
 	listCmd.Flags().IntVar(&listLimit, "limit", 50, "max number of rows to show")
@@ -144,9 +146,10 @@ func runImport(cmd *cobra.Command, args []string) error {
 	defer db.Close()
 
 	uc := commands.NewImportUseCase(commands.ImportDeps{
-		TxRepo:    persistence.NewTransactionRepository(db),
-		BatchRepo: persistence.NewImportBatchRepository(db),
-		AuditRepo: persistence.NewAuditLogRepository(db),
+		TxRepo:     persistence.NewTransactionRepository(db),
+		BatchRepo:  persistence.NewImportBatchRepository(db),
+		AuditRepo:  persistence.NewAuditLogRepository(db),
+		OverlaySvc: services.NewOverlayService(db.DB),
 	})
 
 	result, err := uc.Execute(ctx, commands.ImportOptions{
@@ -210,19 +213,23 @@ func runList(cmd *cobra.Command, args []string) error {
 	}
 	defer db.Close()
 
-	repo := persistence.NewTransactionRepository(db)
-	hidden := false
-	filters := ports.TxFilters{IsHidden: &hidden}
+	repo := persistence.NewOverlayRepository(db)
+	filters := ports.OverlayFilters{
+		SourceKinds: []ports.SourceKind{ports.SourceRaw, ports.SourceSplitChild, ports.SourceReimbursementGroup},
+	}
 	if listCategory != "" {
 		filters.Category = &listCategory
 	}
 	if listSince != "" {
 		filters.StartDate = &listSince
 	}
+	if listIncludeHidden {
+		filters.SourceKinds = append(filters.SourceKinds, ports.SourceSplitHeader)
+	}
 
-	rows, err := repo.FindAll(ctx, ports.TxFindOptions{
+	rows, err := repo.FindAll(ctx, ports.OverlayFindOptions{
 		Filters: filters,
-		Sort:    ports.SortByDate,
+		Sort:    ports.OverlaySortByDate,
 		Order:   ports.SortDesc,
 		Limit:   listLimit,
 	})
@@ -230,23 +237,23 @@ func runList(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("list: %w", err)
 	}
 	if len(rows) == 0 {
-		fmt.Println("no transactions")
+		fmt.Println("no transactions (overlay is empty — run `ledger rebuild-overlay` if you've imported data but never rebuilt)")
 		return nil
 	}
 
-	fmt.Printf("%-6s  %-10s  %12s  %-20s  %s\n", "ID", "DATE", "AMOUNT", "PARTNER", "DESCRIPTION")
-	for _, t := range rows {
+	fmt.Printf("%-6s  %-10s  %12s  %-12s  %-20s  %s\n", "ID", "DATE", "AMOUNT", "KIND", "PARTNER", "DESCRIPTION")
+	for _, o := range rows {
 		partner := ""
-		if t.PartnerName != nil {
-			partner = *t.PartnerName
+		if o.PartnerName != nil {
+			partner = *o.PartnerName
 		}
-		desc := t.Description
+		desc := o.Description
 		if len(desc) > 40 {
 			desc = desc[:37] + "..."
 		}
-		fmt.Printf("%-6d  %-10s  %12s  %-20s  %s\n",
-			t.ID, t.EffectiveDate, t.Amount.DecimalString()+" "+string(t.Amount.Currency),
-			truncate(partner, 20), desc)
+		fmt.Printf("%-6d  %-10s  %12s  %-12s  %-20s  %s\n",
+			o.ID, o.EffectiveDate, o.Amount.DecimalString()+" "+string(o.Amount.Currency),
+			string(o.SourceKind), truncate(partner, 20), desc)
 	}
 	return nil
 }
@@ -259,4 +266,40 @@ func truncate(s string, n int) string {
 		return s[:n]
 	}
 	return s[:n-1] + "…"
+}
+
+var rebuildOverlayCmd = &cobra.Command{
+	Use:   "rebuild-overlay",
+	Short: "Force a full rebuild of the overlay table from raw transactions",
+	Long: `rebuild-overlay deletes and repopulates overlay_transactions from the raw
+transactions + groups + annotations. Normally this happens automatically
+on every annotation write. Use this command after manual DB edits or
+when you suspect the overlay is stale.`,
+	RunE: runRebuildOverlay,
+}
+
+func runRebuildOverlay(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	dbPath := persistence.DefaultDBPath()
+	db, err := persistence.Open(ctx, dbPath)
+	if err != nil {
+		return fmt.Errorf("open db: %w", err)
+	}
+	defer db.Close()
+
+	svc := services.NewOverlayService(db.DB)
+	if err := svc.Rebuild(ctx); err != nil {
+		return err
+	}
+
+	repo := persistence.NewOverlayRepository(db)
+	n, err := repo.Count(ctx, ports.OverlayFilters{})
+	if err != nil {
+		return fmt.Errorf("count: %w", err)
+	}
+	fmt.Printf("✓ overlay rebuilt: %d rows\n", n)
+	return nil
 }

@@ -14,10 +14,11 @@ import (
 )
 
 type ImportDeps struct {
-	TxRepo    ports.TransactionRepository
-	BatchRepo ports.ImportBatchRepository
-	AuditRepo ports.AuditLogRepository
-	Now       func() time.Time
+	TxRepo        ports.TransactionRepository
+	BatchRepo     ports.ImportBatchRepository
+	AuditRepo     ports.AuditLogRepository
+	OverlaySvc    ports.OverlayService
+	Now           func() time.Time
 }
 
 type ImportOptions struct {
@@ -172,6 +173,12 @@ func (u *ImportUseCase) Execute(ctx context.Context, opts ImportOptions) (*Impor
 
 	if err := u.deps.BatchRepo.UpdateCounts(ctx, batchID, inserted, skipped); err != nil {
 		return nil, fmt.Errorf("update batch counts: %w", err)
+	}
+
+	if u.deps.OverlaySvc != nil {
+		if err := u.deps.OverlaySvc.Rebuild(ctx); err != nil {
+			return nil, fmt.Errorf("rebuild overlay: %w", err)
+		}
 	}
 
 	result.Stats.RowsInserted = inserted

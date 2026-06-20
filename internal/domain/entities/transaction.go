@@ -14,6 +14,7 @@ type Transaction struct {
 	PartnerName        *string
 	PartnerIBAN        *string
 	ImportBatchID      *int64
+	ParentTxnID        *int64
 	SourceHash         string
 	RawData            []byte
 	RawDescription     *string

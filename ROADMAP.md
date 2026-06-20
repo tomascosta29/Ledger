@@ -105,15 +105,18 @@ decisions, see [docs/adr/](./docs/adr/).
 - Each action runs through the existing AnnotationService (single-tx atomic, audit row, overlay rebuild) and the screen auto-reloads. Status line shows the new "X unknown remaining" count after every action.
 - Deps now carries the underlying `*sql.DB` so screens can build the AnnotationService that requires it for `BeginTx`.
 
+### Budget screen
+- TUI screen that mirrors the `ledger budget` CLI: per-bucket allocation vs spend, plus unassigned. Reads via the same BucketQuerier (SpendByMonth / UnassignedSpendByMonth) the CLI uses — no separate logic path.
+- Keys: `n` / `p` step the month by ±1; `T` jumps to the current month; `r` reloads. The screen defaults to the current month on init.
+
 ---
 
 ## ⏳ Next (priority order)
 
-1. **Budget screen** — uses the buckets data; live allocation vs spend, period selector. ~1-2 days.
-2. **Recipes screen** — list / author / pick active recipe. Plus CLI: `ledger recipe list|show|use`. ~1-2 days.
-3. **Rules engine + apply** — `rules` table, `RuleService.Apply()`, `ledger rule list|create|apply`. Categorizer screen ties in. ~3-4 days.
-4. **Transfer detection + Linker** — `TransferDetectionService`, `ledger transfers detect`, Linker TUI screen for manual linking. ~2-3 days.
-5. **Manager bulk actions** — `x` to toggle select, `:` for command line (cat/tag/hide/split/undo on the selection). ~half day.
+1. **Recipes screen + summary command** — recipes table, summary command, Recipes TUI screen. ~2 days.
+2. **Rules engine + apply** — `rules` table, `RuleService.Apply()`, `ledger rule list|create|apply`. Categorizer screen ties in. ~3-4 days.
+3. **Transfer detection + Linker** — `TransferDetectionService`, `ledger transfers detect`, Linker TUI screen for manual linking. ~2-3 days.
+4. **Manager bulk actions** — `x` to toggle select, `:` for command line (cat/tag/hide/split/undo on the selection). ~half day.
 
 This order is approximate — exact ordering depends on what the
 operator wants to drive daily. Buckets before rules because the Budget

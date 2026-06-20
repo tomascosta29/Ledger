@@ -53,7 +53,7 @@ v2 or later. For status of what's already shipped, see
   3. **Linker** — expense pane + reimbursement pane, link into persisted
      group. Stub.
   4. **Budget** — per-bucket allocation + spent vs remaining for selected
-     period. Stub.
+     period. TUI ✓ (n/p ± month, T today, r reload).
   5. **Recipes** — list / author / pick active recipe. Stub.
 - 🚧 **Status bar** (always visible): DB path, current screen, mode badge
   (`NORMAL` / `COMMAND` / `HELP`), transient status message.

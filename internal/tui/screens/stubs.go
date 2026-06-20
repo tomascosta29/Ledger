@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/tomascosta29/Ledger/internal/application/ports"
 	"github.com/tomascosta29/Ledger/internal/application/services"
+	"github.com/tomascosta29/Ledger/internal/domain/valueobjects"
 )
 
 type Categorizer struct {
@@ -237,15 +239,112 @@ func (l *Linker) View() string {
 		"  feature ships in the rules + linker milestone\n"
 }
 
-type Budget struct{}
+type Budget struct {
+	deps      Deps
+	month     string
+	spends    []ports.BucketSpend
+	unassigned []ports.BucketSpend
+	statusMsg string
+}
 
 func NewBudget() *Budget { return &Budget{} }
+
 func (b *Budget) Title() string { return "Budget" }
-func (b *Budget) Init(ctx context.Context, deps Deps) tea.Cmd { return nil }
-func (b *Budget) Update(msg tea.Msg) (Screen, tea.Cmd)        { return b, nil }
+
+func (b *Budget) Init(ctx context.Context, deps Deps) tea.Cmd {
+	b.deps = deps
+	b.month = time.Now().UTC().Format("2006-01")
+	b.reload(ctx)
+	return nil
+}
+
+func (b *Budget) reload(ctx context.Context) {
+	spends, err := b.deps.BudgetSvc.SpendByMonth(ctx, b.month)
+	if err != nil {
+		b.statusMsg = "spend: " + err.Error()
+		return
+	}
+	unassigned, err := b.deps.BudgetSvc.UnassignedSpendByMonth(ctx, b.month)
+	if err != nil {
+		b.statusMsg = "unassigned: " + err.Error()
+		return
+	}
+	b.spends = spends
+	b.unassigned = unassigned
+	b.statusMsg = fmt.Sprintf("%d buckets · %d unassigned currencies", len(spends), len(unassigned))
+}
+
+func (b *Budget) Update(msg tea.Msg) (Screen, tea.Cmd) {
+	ctx := context.Background()
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "n":
+			// next month
+			t, err := time.Parse("2006-01", b.month)
+			if err != nil {
+				b.statusMsg = "bad month " + b.month
+				return b, nil
+			}
+			t = t.AddDate(0, 1, 0)
+			b.month = t.Format("2006-01")
+			b.reload(ctx)
+		case "p":
+			t, err := time.Parse("2006-01", b.month)
+			if err != nil {
+				b.statusMsg = "bad month " + b.month
+				return b, nil
+			}
+			t = t.AddDate(0, -1, 0)
+			b.month = t.Format("2006-01")
+			b.reload(ctx)
+		case "T":
+			b.month = time.Now().UTC().Format("2006-01")
+			b.reload(ctx)
+		case "r":
+			b.reload(ctx)
+		}
+	}
+	return b, nil
+}
+
 func (b *Budget) View() string {
-	return "  (budget screen — per-bucket allocation vs spend)\n" +
-		"  use `ledger budget` for the CLI view\n"
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "  Budget for %s    (n/p: ±month · T: today · r: reload)\n\n", b.month)
+	fmt.Fprintf(&sb, "  %-22s  %12s  %12s  %12s  %s\n", "BUCKET", "ALLOCATED", "SPENT", "REMAINING", "TX")
+	for _, s := range b.spends {
+		remaining := s.AllocatedMinor - s.SpentMinor
+		fmt.Fprintf(&sb, "  %-22s  %12s  %12s  %12s  %d\n",
+			s.BucketName,
+			formatMinor(s.AllocatedMinor, s.Currency),
+			formatMinor(s.SpentMinor, s.Currency),
+			formatMinor(remaining, s.Currency),
+			s.Count,
+		)
+	}
+	if len(b.unassigned) > 0 {
+		sb.WriteString("\n  Unassigned:\n")
+		for _, s := range b.unassigned {
+			fmt.Fprintf(&sb, "    %-20s  %12s  %d tx\n",
+				s.Currency,
+				formatMinor(s.SpentMinor, s.Currency),
+				s.Count,
+			)
+		}
+	}
+	if len(b.spends) == 0 && len(b.unassigned) == 0 {
+		sb.WriteString("\n  (nothing to show for this month)\n")
+	}
+	return sb.String()
+}
+
+func formatMinor(minor int64, currency string) string {
+	cur := valueobjects.Currency(currency)
+	m, err := valueobjects.New(minor, cur)
+	if err != nil {
+		return fmt.Sprintf("%d %s", minor, currency)
+	}
+	return m.DecimalString() + " " + currency
 }
 
 type Recipes struct{}

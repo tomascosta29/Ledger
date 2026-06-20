@@ -89,17 +89,19 @@ decisions, see [docs/adr/](./docs/adr/).
 - `ledger list` includes `SourceSplitHeader` by default so a split shows up as a header + N children.
 - `ledger split <txID> --child "amount|description"` (repeatable) for non-interactive, or no flags for interactive prompting.
 
+### TUI shell
+- Bubble Tea + Bubbles + Lipgloss wired in. The `App` is the root model: it owns the current screen, the status bar, and the help overlay. Status bar shows DB path, current screen title, mode badge, and a transient status slot. `?` opens the help overlay; any key dismisses. `1..5` jumps between the five screens; `q` / `ctrl+c` quits. Manager is the only screen with any real content so far — it loads the latest 200 overlay rows and supports `j/k/g/G` navigation. Categorizer / Linker / Budget / Recipes are stubs that document what each screen will own and tell the operator to use the CLI in the meantime. Subsequent milestones fill them in.
+
 ---
 
 ## ⏳ Next (priority order)
 
-1. **TUI shell** — Bubble Tea router model, status bar, vim-style keybindings. Proves the pattern before building 5 screens. ~1-2 days.
-2. **Manager screen** — transaction list with filter DSL (`desc:`, `partner:`, `iban:`, `min:`, `max:`, `sign:`). Reads from overlay. ~1-2 days.
-3. **Categorizer screen** — unknown-transactions list, bulk categorize, rule-create from focused tx. ~1-2 days.
-4. **Budget screen** — uses the buckets data. ~1-2 days.
-5. **Recipes screen** — list / author / pick active recipe. Plus CLI: `ledger recipe list|show|use`. ~1-2 days.
-6. **Rules engine + apply** — `rules` table, `RuleService.Apply()`, `ledger rule list|create|apply`. Categorizer screen ties in. ~3-4 days.
-7. **Transfer detection** — `TransferDetectionService`, `ledger transfers detect`. Linker screen ties in. ~2-3 days.
+1. **Manager screen** — filter DSL (`desc:`, `partner:`, `iban:`, `min:`, `max:`, `sign:`), bulk select with `x`, command line for `cat/tag/hide/split`. ~1-2 days.
+2. **Categorizer screen** — unknown-transactions list, bulk categorize, rule-create from focused tx. ~1-2 days.
+3. **Budget screen** — uses the buckets data; live allocation vs spend, period selector. ~1-2 days.
+4. **Recipes screen** — list / author / pick active recipe. Plus CLI: `ledger recipe list|show|use`. ~1-2 days.
+5. **Rules engine + apply** — `rules` table, `RuleService.Apply()`, `ledger rule list|create|apply`. Categorizer screen ties in. ~3-4 days.
+6. **Transfer detection + Linker** — `TransferDetectionService`, `ledger transfers detect`, Linker TUI screen for manual linking. ~2-3 days.
 
 This order is approximate — exact ordering depends on what the
 operator wants to drive daily. Buckets before rules because the Budget

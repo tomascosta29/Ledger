@@ -38,30 +38,28 @@ v2 or later. For status of what's already shipped, see
 - ✓ See [ADR 0001](./docs/adr/0001-sqlite-connection-strategy.md) for the
   connection-pool decision (MaxOpenConns=1).
 
-## 3. TUI ⏳
+## 3. TUI 🚧
 
-- ⏳ Bubble Tea + Bubbles + Lipgloss.
-- ⏳ **Router model**: parent owns current screen + status bar; each screen is
+- 🚧 Bubble Tea + Bubbles + Lipgloss.
+- 🚧 **Router model**: parent owns current screen + status bar; each screen is
   a self-contained `tea.Model`.
-- ⏳ **5 screens**, navigated by `:screen N` or the screen key:
+- 🚧 **5 screens**, navigated by `1..5`:
   1. **Manager** — transaction list, filter DSL (`desc:`, `partner:`,
-     `iban:`, `min:`, `max:`, `sign:`).
+     `iban:`, `min:`, `max:`, `sign:`). Stub ✓; filter DSL ⏳.
   2. **Categorizer** — unknown transactions, bulk categorize,
-     rule-create from focused tx.
+     rule-create from focused tx. Stub.
   3. **Linker** — expense pane + reimbursement pane, link into persisted
-     group.
+     group. Stub.
   4. **Budget** — per-bucket allocation + spent vs remaining for selected
-     period.
-  5. **Recipes** — list / author / pick active recipe.
-- ⏳ **Status bar** (always visible): DB path, active recipe, period, total
-  tx count, mode badge (`NORMAL`/`INSERT`/`COMMAND`).
-- ⏳ **Keybindings**: vim-style modal.
+     period. Stub.
+  5. **Recipes** — list / author / pick active recipe. Stub.
+- 🚧 **Status bar** (always visible): DB path, current screen, mode badge
+  (`NORMAL` / `COMMAND` / `HELP`), transient status message.
+- 🚧 **Keybindings**: vim-style modal.
   - Normal: `j/k/g/G` nav, `/` filter, `x` toggle select, `:` command line,
     `?` help, `q` quit, `1..5` jump to screen.
-  - Insert: triggered for text input. `Esc` returns to Normal.
-  - Command: `:` enters. Subcommands: `cat`, `tag`, `hide`, `split`,
-    `rule`, `recipe`, `screen N`, `quit`.
-- ⏳ `?` opens a help overlay with all bindings + recipes screen summary.
+  - Help: any key dismisses.
+- 🚧 `?` opens a help overlay with all bindings.
 
 ## 4. Feature scope (v1)
 

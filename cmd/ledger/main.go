@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 
 	"github.com/tomascosta29/Ledger/internal/application/commands"
@@ -18,6 +19,8 @@ import (
 	"github.com/tomascosta29/Ledger/internal/domain/entities"
 	"github.com/tomascosta29/Ledger/internal/domain/valueobjects"
 	"github.com/tomascosta29/Ledger/internal/infrastructure/persistence"
+	tui "github.com/tomascosta29/Ledger/internal/tui"
+	tuiScreens "github.com/tomascosta29/Ledger/internal/tui/screens"
 )
 
 var version = "0.0.0"
@@ -425,10 +428,33 @@ func init() {
 var tuiCmd = &cobra.Command{
 	Use:   "tui",
 	Short: "Open the LedgerPro TUI (default if no subcommand given)",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		fmt.Println("ledger tui: not yet implemented")
-		return nil
-	},
+	RunE:  runTUI,
+}
+
+func runTUI(cmd *cobra.Command, args []string) error {
+	ctx := ctxFromCmd(cmd)
+	db, err := openDB(ctx)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	deps := tuiScreens.Deps{
+		DBPath:      persistence.DefaultDBPath(),
+		TxRepo:      persistence.NewTransactionRepository(db),
+		TagRepo:     persistence.NewTagRepository(db),
+		BucketRepo:  persistence.NewBucketRepository(db),
+		AuditRepo:   persistence.NewAuditLogRepository(db),
+		BatchRepo:   persistence.NewImportBatchRepository(db),
+		OverlayRepo: persistence.NewOverlayRepository(db),
+		OverlaySvc:  services.NewOverlayService(db.DB),
+		BudgetSvc:   persistence.NewBucketRepository(db),
+	}
+
+	app := tui.NewApp(ctx, deps)
+	p := tea.NewProgram(app, tea.WithAltScreen())
+	_, err = p.Run()
+	return err
 }
 
 var initCmd = &cobra.Command{

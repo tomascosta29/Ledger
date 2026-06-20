@@ -20,9 +20,10 @@ v2 or later. For status of what's already shipped, see
 - ✓ **Module path:** `github.com/tomascosta29/Ledger`.
 - ✓ **Repo layout:** `cmd/ledger/main.go` → `internal/{domain,application,infrastructure,tui,cli}`.
 - ✓ **Go version:** 1.25.
-- ⏳ **Distribution:** GoReleaser + GitHub Releases (linux/darwin/windows,
+- ✓ **Distribution:** GoReleaser + GitHub Releases (linux/darwin/windows,
   amd64+arm64). `go install github.com/tomascosta29/Ledger/cmd/ledger@latest`
-  for devs. (Not yet wired — currently `go build` only.)
+  for devs. Workflow in `.github/workflows/release.yml`; config in
+  `.goreleaser.yml`. CI in `.github/workflows/ci.yml`.
 
 ## 2. Persistence ✓
 

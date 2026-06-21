@@ -161,6 +161,54 @@ func (s *AnnotationService) CategorizeViaRule(ctx context.Context, txID int64, c
 	})
 }
 
+func (s *AnnotationService) SetBucket(ctx context.Context, txID int64, bucketName string) error {
+	old, err := s.deps.TxRepo.GetByID(ctx, txID)
+	if err != nil {
+		return fmt.Errorf("load transaction: %w", err)
+	}
+	bucket, err := s.resolveBucket(ctx, &bucketName, string(old.Amount.Currency))
+	if err != nil {
+		return err
+	}
+	if sameBucketID(old.BucketID, &bucket.ID) {
+		return nil
+	}
+
+	oldBucket := bucketIDToStringPtr(old.BucketID)
+	newBucket := bucketIDToStringPtr(&bucket.ID)
+	return s.runTx(ctx, func(tx *sql.Tx) error {
+		if err := s.deps.TxRepo.SetBucketDBTX(ctx, tx, txID, &bucket.ID); err != nil {
+			return err
+		}
+		entry := &entities.AuditEntry{
+			TableName: "transactions",
+			RecordID:  txID,
+			Action:    entities.AuditActionBucket,
+			Field:     strPtr("bucket_id"),
+			OldValue:  oldBucket,
+			NewValue:  newBucket,
+			CreatedAt: s.deps.Now(),
+		}
+		if _, err := s.deps.AuditRepo.AppendDBTX(ctx, tx, entry); err != nil {
+			return err
+		}
+		return s.deps.OverlaySvc.RebuildWithTx(ctx, tx)
+	})
+}
+
+func (s *AnnotationService) BulkSetBucket(ctx context.Context, txIDs []int64, bucketName string) error {
+	if len(txIDs) == 0 {
+		return errors.New("no transaction ids provided")
+	}
+	uniqueIDs := dedupIDs(txIDs)
+	for _, id := range uniqueIDs {
+		if err := s.SetBucket(ctx, id, bucketName); err != nil {
+			return fmt.Errorf("txn %d: %w", id, err)
+		}
+	}
+	return nil
+}
+
 func (s *AnnotationService) SetHidden(ctx context.Context, txID int64, hidden bool) error {
 	old, err := s.deps.TxRepo.GetByID(ctx, txID)
 	if err != nil {

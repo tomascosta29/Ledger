@@ -15,6 +15,7 @@ would cause us to revisit.
 | 0005   | [Category as first-class entity](./0005-category-as-entity.md)     | Accepted |
 | 0006   | [Unify Transfer and Reimbursement groups](./0006-unify-transfer-reimbursement.md) | Accepted |
 | 0007   | [Rule apply --overwrite flag](./0007-rule-overwrite-flag.md)             | Accepted |
+| 0008   | [TUI visual chrome](./0008-tui-visual-chrome.md)                         | Accepted |
 
 ## When to write a new ADR
 

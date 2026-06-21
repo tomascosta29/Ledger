@@ -198,6 +198,60 @@ but were felt in real use. Shipped as two parallel tracks.
 
 ---
 
+## ✓ Done — v1.2 TUI polish (tag v1.2.0)
+
+A visual + structural pass on the TUI. No flow, keymap, or DSL
+changes — same five screens, same commands, but the rendering
+matches what the operator is looking at instead of fighting them.
+
+- [ADR 0008](./docs/adr/0008-tui-visual-chrome.md) — chrome
+  architecture: three new internal/tui packages own the visual
+  language.
+  - `internal/tui/styles` — color tokens (Accent/Out/In/Dim/Warn/
+    Mute/Strong/Surface) + composed `lipgloss.Style` values
+    (CursorRow, SelectedRow, AmountOut/In/Zero, SidebarActive,
+    FooterMode/Key/KeyCount, …) + Unicode glyphs (▶ cursor, ►
+    active, [x] selection, ─ rule, · bullet). Screens and chrome
+    both import it; nothing else calls `lipgloss.NewStyle()`.
+  - `internal/tui/hints` — `FooterHints` + `KeyHint` payload,
+    neutral location to avoid a chrome↔screens import cycle.
+  - `internal/tui/chrome` — `Sidebar`, `Header`, `Footer`,
+    `Layout`. Sidebar lists the five screens with the active one
+    marked `►` + bold + Accent. Header is a top `─` rule; in
+    narrow mode (< 80 cols) it folds the screen title in as a
+    breadcrumb. Footer is **mode-aware** — the visible keys
+    change based on the screen's state.
+- `Screen` interface gains `View(width, height int) string` and
+  `Hints(width int) hints.FooterHints`. Each screen knows its
+  own modes; chrome just renders.
+- `App.View()` builds the sidebar entries from the registered
+  screen list, computes `contentW` (after sidebar) and `contentH`
+  (between header/footer/statusbar), and delegates composition
+  to `chrome.Layout`.
+- All five screens render with the new visual language: bold
+  column headers + bottom rule; cursor row highlighted (reverse
+  + Surface bg); selected row highlighted (lighter Surface bg);
+  selection glyph `[x]` on the left edge; amount colored by sign
+  (Out/In/Zero); category dim when Unknown; description
+  truncated with `…` at narrow widths.
+- **Manager mode-aware footer**: Normal shows 8 keys (j/k nav ·
+  / filter · x select · C cat · T tag · H hide · U undo · ? help).
+  Selection switches to `[x] toggle · C cat N · T tag N · H hide N ·
+  U undo · : clear` with the count accented. Filter mode shows
+  `Enter apply · Esc cancel · Bksp edit`. Bulk mode shows
+  `Enter apply · Esc cancel`. Same pattern on Categorizer
+  (Normal / Input), Linker, Budget, Recipes.
+- No schema changes. No new dependencies (`bubbles` was already
+  indirect; chrome uses `lipgloss` only, which was already
+  direct).
+
+Verification: `go vet` clean, `go build` clean, `go test ./...`
+all green. Cross-screen preview at
+`/tmp/manager_preview.txt` (run `WRITE_PREVIEW=1 go test -run
+TestPreviewManager ./internal/tui/screens/...`).
+
+---
+
 ## 🔮 v2 (deferred until v1 is in real use)
 
 From [SPEC.md](./SPEC.md) Section 4:
@@ -230,6 +284,7 @@ From SPEC Section 2:
 | 0005   | Category as first-class entity             | Accepted |
 | 0006   | Unify Transfer and Reimbursement groups     | Accepted |
 | 0007   | Rule apply --overwrite flag                 | Accepted |
+| 0008   | TUI visual chrome                           | Accepted |
 
 When a future contributor asks "why was it done this way?", start
 with the ADR index in [docs/adr/README.md](./docs/adr/README.md).

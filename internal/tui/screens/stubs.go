@@ -290,14 +290,14 @@ func (l *Linker) reload(ctx context.Context) {
 	if groupRepo != nil {
 		all, err := groupRepo.ListGroups(ctx)
 		if err == nil {
-			l.groups = l.groups[:0]
-			for _, g := range all {
-				note := g.Name
-				if note == "" {
-					note = fmt.Sprintf("%d", g.ID)
+				l.groups = l.groups[:0]
+				for _, g := range all {
+					note := g.Name
+					if note == "" {
+						note = fmt.Sprintf("%d", g.ID)
+					}
+					l.groups = append(l.groups, linkerGroup{id: g.ID, note: note})
 				}
-				l.groups = append(l.groups, linkerGroup{id: g.ID, typ: g.Type, note: note})
-			}
 		}
 	}
 	if l.cursor >= len(l.cands)+len(l.groups) {

@@ -185,7 +185,7 @@ func (s *OverlayService) insertSplitChildren(ctx context.Context, tx *sql.Tx, re
 
 func (s *OverlayService) checkGroupCurrencies(ctx context.Context, tx *sql.Tx) error {
 	rows, err := tx.QueryContext(ctx, `
-		SELECT g.id, g.type, COUNT(DISTINCT t.currency) AS currency_count
+		SELECT g.id, COUNT(DISTINCT t.currency) AS currency_count
 		FROM transaction_groups g
 		JOIN transaction_group_members m ON m.group_id = g.id
 		JOIN transactions t ON t.id = m.transaction_id
@@ -226,17 +226,17 @@ func (s *OverlayService) insertGroupRows(ctx context.Context, tx *sql.Tx, refres
 			COALESCE(MAX(t.effective_date), ''),
 			COALESCE(SUM(t.amount_minor), 0),
 			MAX(t.currency),
-			'[' || g.type || '] ' || COALESCE(MAX(t.description), ''),
+			'[group] ' || COALESCE(MAX(t.description), ''),
 			NULL,
 			NULL,
 			'Unassigned',
 			NULL,
 			'',
 			g.id,
-			g.type,
-			CASE WHEN g.type = 'transfer' THEN 'transfer_group' ELSE 'reimbursement_group' END,
+			'',
+			'reimbursement_group',
 			GROUP_CONCAT(t.id),
-			CASE WHEN g.type = 'transfer' THEN 1 ELSE 0 END,
+			0,
 			?
 		FROM transaction_groups g
 		JOIN transaction_group_members m ON m.group_id = g.id

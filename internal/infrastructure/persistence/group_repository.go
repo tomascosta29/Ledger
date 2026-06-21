@@ -25,8 +25,8 @@ func (r *GroupRepository) CreateGroup(ctx context.Context, g *entities.Transacti
 		g.CreatedAt = time.Now().UTC()
 	}
 	res, err := r.db.ExecContext(ctx,
-		`INSERT INTO transaction_groups (type, name, created_at) VALUES (?, ?, ?)`,
-		g.Type, g.Name, now,
+		`INSERT INTO transaction_groups (name, created_at) VALUES (?, ?)`,
+		g.Name, now,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("create group: %w", err)
@@ -40,10 +40,10 @@ func (r *GroupRepository) CreateGroup(ctx context.Context, g *entities.Transacti
 
 func (r *GroupRepository) GetGroup(ctx context.Context, id int64) (*entities.TransactionGroup, error) {
 	row := r.db.QueryRowContext(ctx,
-		`SELECT id, type, name, created_at FROM transaction_groups WHERE id = ?`, id)
+		`SELECT id, name, created_at FROM transaction_groups WHERE id = ?`, id)
 	var g entities.TransactionGroup
 	var createdAt string
-	if err := row.Scan(&g.ID, &g.Type, &g.Name, &createdAt); err != nil {
+	if err := row.Scan(&g.ID, &g.Name, &createdAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ports.ErrNotFound
 		}
@@ -93,7 +93,7 @@ func (r *GroupRepository) ListMembers(ctx context.Context, groupID int64) ([]*en
 
 func (r *GroupRepository) ListGroups(ctx context.Context) ([]*entities.TransactionGroup, error) {
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT id, type, name, created_at FROM transaction_groups ORDER BY created_at DESC`)
+		`SELECT id, name, created_at FROM transaction_groups ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -102,7 +102,7 @@ func (r *GroupRepository) ListGroups(ctx context.Context) ([]*entities.Transacti
 	for rows.Next() {
 		var g entities.TransactionGroup
 		var createdAt string
-		if err := rows.Scan(&g.ID, &g.Type, &g.Name, &createdAt); err != nil {
+		if err := rows.Scan(&g.ID, &g.Name, &createdAt); err != nil {
 			return nil, err
 		}
 		g.CreatedAt = parseISO(createdAt)

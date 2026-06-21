@@ -50,9 +50,7 @@ func (s *ReimbursementService) Link(ctx context.Context, txIDs []int64) (int64, 
 		return 0, fmt.Errorf("both transactions have the same sign; expected expense + reimbursement")
 	}
 
-	groupID, err := s.deps.GroupRepo.CreateGroup(ctx, &entities.TransactionGroup{
-		Type: entities.GroupTypeReimbursement,
-	})
+	groupID, err := s.deps.GroupRepo.CreateGroup(ctx, &entities.TransactionGroup{})
 	if err != nil {
 		return 0, err
 	}

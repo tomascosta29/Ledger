@@ -138,9 +138,7 @@ func (s *TransferService) score(out, in *entities.Transaction) int {
 }
 
 func (s *TransferService) Confirm(ctx context.Context, c TransferCandidate) (int64, error) {
-	groupID, err := s.deps.GroupRepo.CreateGroup(ctx, &entities.TransactionGroup{
-		Type: entities.GroupTypeTransfer,
-	})
+	groupID, err := s.deps.GroupRepo.CreateGroup(ctx, &entities.TransactionGroup{})
 	if err != nil {
 		return 0, err
 	}

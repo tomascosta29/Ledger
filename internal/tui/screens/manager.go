@@ -6,8 +6,11 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/tomascosta29/Ledger/internal/application/ports"
+	"github.com/tomascosta29/Ledger/internal/tui/hints"
+	"github.com/tomascosta29/Ledger/internal/tui/styles"
 )
 
 // Manager is the transaction list screen (filter DSL, j/k nav, ...).
@@ -303,7 +306,7 @@ func (m *Manager) updateFilterInput(msg tea.KeyMsg) (Screen, tea.Cmd) {
 	return m, nil
 }
 
-func (m *Manager) View() string {
+func (m *Manager) View(width, height int) string {
 	if m.filterMode {
 		return fmt.Sprintf("  filter: %s_\n", m.filterInput)
 	}
@@ -320,24 +323,238 @@ func (m *Manager) View() string {
 	if len(m.rows) == 0 {
 		return "  (no transactions — try `ledger import` or `ledger add`)\n"
 	}
+
 	var b strings.Builder
-	b.WriteString("  ID    DATE         AMOUNT       CAT        DESCRIPTION\n")
-	for i, r := range m.rows {
-		cursor := "  "
-		if i == m.cursor {
-			cursor = "> "
-		}
-		sel := " "
-		if m.selected[r.id] {
-			sel = "x"
-		}
-		fmt.Fprintf(&b, "%s%s%-5d  %-11s  %-11s  %-9s  %s\n",
-			cursor, sel, r.id, r.date, r.amount, r.cat, r.desc)
+	b.WriteString(m.renderHeader(width))
+	b.WriteString("\n")
+	b.WriteString(m.renderHeaderRule(width))
+	b.WriteString("\n")
+
+	// Reserve 2 lines for header + rule; render what fits in height.
+	visibleRows := m.rows
+	if height > 2 && len(visibleRows) > height-2 {
+		visibleRows = visibleRows[:height-2]
 	}
-	if len(m.selected) > 0 {
-		fmt.Fprintf(&b, "  selected: %d    (C cat · T tag · H hide · U undo · X clear)\n", len(m.selected))
+	for i, r := range visibleRows {
+		b.WriteString(m.renderRow(i, r, width))
+		b.WriteString("\n")
 	}
 	return b.String()
+}
+
+// renderHeader returns the styled column header row.
+func (m *Manager) renderHeader(width int) string {
+	idW := 5
+	dateW := 10
+	amountW := 13
+	catW := 10
+	descW := width - (1 + 1 + 3 + 1 + idW + 2 + dateW + 2 + amountW + 2 + catW + 2)
+	if descW < 4 {
+		descW = 4
+	}
+	h := fmt.Sprintf(" %s %s %s %s %s %s %s",
+		strings.Repeat(" ", 1),
+		strings.Repeat(" ", 3),
+		padBoth("ID", idW),
+		padBoth("DATE", dateW),
+		padBoth("AMOUNT", amountW),
+		padBoth("CAT", catW),
+		"DESCRIPTION",
+	)
+	return styles.HeaderText.Render(truncateToWidth(h, width))
+}
+
+// renderHeaderRule returns the rule line under the header.
+func (m *Manager) renderHeaderRule(width int) string {
+	return styles.HeaderRule.Render(strings.Repeat(styles.RuleChar, width))
+}
+
+// renderRow returns one styled transaction row.
+func (m *Manager) renderRow(i int, r managerRow, width int) string {
+	isCursor := i == m.cursor
+	isSel := m.selected[r.id]
+
+	var rowStyle lipgloss.Style
+	switch {
+	case isCursor && isSel:
+		rowStyle = styles.CursorSelectedRow
+	case isCursor:
+		rowStyle = styles.CursorRow
+	case isSel:
+		rowStyle = styles.SelectedRow
+	}
+
+	cursorChar := " "
+	if isCursor {
+		cursorChar = styles.CursorGlyph
+	}
+	selChar := styles.InactiveSelGlyph
+	if isSel {
+		selChar = styles.SelectionGlyph
+	}
+
+	idW := 5
+	dateW := 10
+	amountW := 13
+	catW := 10
+	descW := width - (1 + 1 + 3 + 1 + idW + 2 + dateW + 2 + amountW + 2 + catW + 2)
+	if descW < 4 {
+		descW = 4
+	}
+
+	id := fmt.Sprintf("%*d", idW, r.id)
+	date := padRight(truncate(r.date, dateW), dateW)
+	amount := styleAmount(r.amount, amountW)
+	cat := padRight(truncate(coalesce(r.cat, "Unknown"), catW), catW)
+	if r.cat == "" || r.cat == "Unknown" {
+		cat = styles.UnknownCategory.Render(cat)
+	}
+	desc := truncate(r.desc, descW)
+
+	row := cursorChar + " " + selChar + " " + id + "  " + date + "  " + amount + "  " + cat + "  " + desc
+	return rowStyle.Render(row)
+}
+
+// styleAmount returns the amount colored by sign, right-aligned in
+// the given width.
+func styleAmount(s string, width int) string {
+	if width < 1 {
+		width = 1
+	}
+	s = truncate(s, width)
+	var style lipgloss.Style
+	switch {
+	case strings.HasPrefix(s, "-"):
+		style = styles.AmountOut
+	case s == "" || (s[0] == '0' && !strings.ContainsAny(s, "123456789")):
+		style = styles.AmountZero
+	default:
+		style = styles.AmountIn
+	}
+	pad := width - lipgloss.Width(s)
+	if pad < 0 {
+		pad = 0
+	}
+	return style.Render(strings.Repeat(" ", pad) + s)
+}
+
+func padRight(s string, n int) string {
+	if len(s) >= n {
+		return s
+	}
+	return s + strings.Repeat(" ", n-len(s))
+}
+
+func padBoth(s string, n int) string {
+	if len(s) >= n {
+		return s[:n]
+	}
+	left := (n - len(s)) / 2
+	right := n - len(s) - left
+	return strings.Repeat(" ", left) + s + strings.Repeat(" ", right)
+}
+
+func coalesce(s, fallback string) string {
+	if s == "" {
+		return fallback
+	}
+	return s
+}
+
+// truncate returns s clipped to at most n runes, with an ellipsis if
+// it was longer.
+func truncate(s string, n int) string {
+	if n < 1 {
+		return ""
+	}
+	if lipgloss.Width(s) <= n {
+		return s
+	}
+	if n <= 1 {
+		return string(s[:n])
+	}
+	// Trim rune-by-rune until it fits with the ellipsis suffix.
+	runes := []rune(s)
+	for len(runes) > 0 && lipgloss.Width(string(runes))+lipgloss.Width(styles.EllipsisChar) > n {
+		runes = runes[:len(runes)-1]
+	}
+	return string(runes) + styles.EllipsisChar
+}
+
+// truncateToWidth clips a string to at most n visible cells.
+func truncateToWidth(s string, n int) string {
+	if n < 1 {
+		return ""
+	}
+	if lipgloss.Width(s) <= n {
+		return s
+	}
+	runes := []rune(s)
+	for len(runes) > 0 && lipgloss.Width(string(runes)) > n {
+		runes = runes[:len(runes)-1]
+	}
+	return string(runes)
+}
+
+func (m *Manager) Hints(width int) hints.FooterHints {
+	// Mode-aware footer. Selected-count replaces the global key
+	// hints when something is selected; filter and bulk modes
+	// surface their own short hint set.
+	if m.filterMode {
+		return hints.FooterHints{
+			Mode: "Filter",
+			Keys: []hints.KeyHint{
+				{Key: "Enter", Label: "apply"},
+				{Key: "Esc", Label: "cancel"},
+				{Key: "Bksp", Label: "edit"},
+			},
+		}
+	}
+	if m.bulkMode {
+		label := "apply"
+		switch m.bulkAction {
+		case bulkCategorize:
+			label = "Bulk: categorize"
+		case bulkTag:
+			label = "Bulk: tag"
+		case bulkHide:
+			label = "Bulk: hide"
+		}
+		return hints.FooterHints{
+			Mode: label,
+			Keys: []hints.KeyHint{
+				{Key: "Enter", Label: "apply"},
+				{Key: "Esc", Label: "cancel"},
+			},
+		}
+	}
+	if len(m.selected) > 0 {
+		n := len(m.selected)
+		return hints.FooterHints{
+			Mode: "Normal",
+			Keys: []hints.KeyHint{
+				{Key: "[x]", Label: "toggle"},
+				{Key: "C", Label: "cat", Count: n},
+				{Key: "T", Label: "tag", Count: n},
+				{Key: "H", Label: "hide", Count: n},
+				{Key: "U", Label: "undo"},
+				{Key: ":", Label: "clear"},
+			},
+		}
+	}
+	return hints.FooterHints{
+		Mode: "Normal",
+		Keys: []hints.KeyHint{
+			{Key: "j/k", Label: "nav"},
+			{Key: "/", Label: "filter"},
+			{Key: "x", Label: "select"},
+			{Key: "C", Label: "cat"},
+			{Key: "T", Label: "tag"},
+			{Key: "H", Label: "hide"},
+			{Key: "U", Label: "undo"},
+			{Key: "?", Label: "help"},
+		},
+	}
 }
 
 func min(a, b int) int {

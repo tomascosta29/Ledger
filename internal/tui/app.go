@@ -3,11 +3,10 @@ package tui
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 
+	"github.com/tomascosta29/Ledger/internal/tui/chrome"
 	"github.com/tomascosta29/Ledger/internal/tui/components"
 	"github.com/tomascosta29/Ledger/internal/tui/screens"
 )
@@ -122,16 +121,43 @@ func (a *App) View() string {
 	if a.mode == ModeHelp {
 		return a.help.View(a.width, a.height)
 	}
-	body := a.current.View()
-	status := components.StatusBar(components.Status{
+
+	// Build sidebar entries from the registered screen list.
+	entries := make([]chrome.SidebarEntry, len(a.screenList))
+	currentIdx := 0
+	for i, s := range a.screenList {
+		entries[i] = chrome.SidebarEntry{Name: s.Title(), Active: s == a.current}
+		if s == a.current {
+			currentIdx = i
+		}
+	}
+	_ = currentIdx
+
+	// Compute content area dimensions: header + footer + statusbar
+	// reserve 3 rows; sidebar (if visible) reserves its own width.
+	contentH := a.height - 3
+	if contentH < 1 {
+		contentH = 1
+	}
+	contentW := a.width
+	if a.width >= chrome.MinSidebarWidth {
+		contentW = a.width - chrome.SidebarWidth(entries)
+	}
+	if contentW < 1 {
+		contentW = 1
+	}
+
+	body := a.current.View(contentW, contentH)
+	hints := a.current.Hints(a.width)
+	status := components.Status{
 		DBPath:    a.deps.DBPath,
 		Screen:    a.current.Title(),
 		Mode:      modeLabel(a.mode),
 		StatusMsg: a.statusMsg,
 		Width:     a.width,
-	})
-	helpLine := components.HintLine(a.width)
-	return strings.Join([]string{body, status, helpLine}, "\n")
+	}
+
+	return chrome.Layout(entries, a.current.Title(), body, hints, status, a.width, a.height)
 }
 
 func modeLabel(m Mode) string {
@@ -145,18 +171,3 @@ func modeLabel(m Mode) string {
 	}
 	return fmt.Sprintf("M%d", int(m))
 }
-
-var (
-	statusStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("245")).
-			Background(lipgloss.Color("236")).
-			Padding(0, 1)
-	screenStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("117")).
-			Bold(true)
-	modeStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("223")).
-			Bold(true)
-	hintStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("241"))
-)

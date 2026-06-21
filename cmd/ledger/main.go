@@ -64,7 +64,6 @@ func init() {
 	rootCmd.AddCommand(recipeCmd)
 	rootCmd.AddCommand(summaryCmd)
 	rootCmd.AddCommand(ruleCmd)
-	rootCmd.AddCommand(transfersCmd)
 	rootCmd.AddCommand(reimburseCmd)
 	importCmd.Flags().StringVarP(&importProfile, "profile", "p", "", "bank profile (erste, revolut, or custom TOML)")
 	importCmd.Flags().BoolVar(&importDryRun, "dry-run", false, "parse and preview without writing to the DB")
@@ -928,102 +927,18 @@ func runRuleApply(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-var transfersCmd = &cobra.Command{
-	Use:   "transfers",
-	Short: "Detect and confirm transfer pairs",
-}
-
 var reimburseCmd = &cobra.Command{
 	Use:   "reimburse",
-	Short: "Link an expense with a reimbursement",
+	Short: "Link two transactions into a group (reimbursement, transfer between own accounts)",
 }
 
 func init() {
-	transfersCmd.AddCommand(transfersDetectCmd)
-	transfersCmd.AddCommand(transfersConfirmCmd)
 	reimburseCmd.AddCommand(reimburseLinkCmd)
 }
 
-var transfersDetectCmd = &cobra.Command{
-	Use:   "detect",
-	Short: "Heuristically find transfer pairs (opposite signs, same amount, close in time)",
-	Args:  cobra.NoArgs,
-	RunE:  runTransfersDetect,
-}
-
-func runTransfersDetect(cmd *cobra.Command, args []string) error {
-	ctx := ctxFromCmd(cmd)
-	db, err := openDB(ctx)
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-	svc := services.NewTransferService(services.TransferDetectionDeps{
-		TxRepo:     persistence.NewTransactionRepository(db),
-		GroupRepo:  persistence.NewGroupRepository(db),
-		AuditRepo:  persistence.NewAuditLogRepository(db),
-		OverlaySvc: services.NewOverlayService(db.DB),
-	})
-	cands, err := svc.Detect(ctx)
-	if err != nil {
-		return err
-	}
-	if len(cands) == 0 {
-		fmt.Println("no transfer candidates found")
-		return nil
-	}
-	fmt.Printf("%-5s  %-5s  %-12s  %-12s  %-12s  %-12s  %-5s\n",
-		"OUTID", "INID", "OUTDATE", "INDATE", "OUTAMT", "INAMT", "SCORE")
-	for _, c := range cands {
-		fmt.Printf("%-5d  %-5d  %-12s  %-12s  %12d  %12d  %d\n",
-			c.OutID, c.InID, c.OutDate, c.InDate, c.OutAmount, c.InAmount, c.Score)
-	}
-	fmt.Println()
-	fmt.Println("Run 'ledger transfers confirm <outID> <inID>' to mark a pair as a transfer.")
-	return nil
-}
-
-var transfersConfirmCmd = &cobra.Command{
-	Use:   "confirm <outID> <inID>",
-	Short: "Mark a transfer pair as linked",
-	Args:  cobra.ExactArgs(2),
-	RunE:  runTransfersConfirm,
-}
-
-func runTransfersConfirm(cmd *cobra.Command, args []string) error {
-	ctx := ctxFromCmd(cmd)
-	db, err := openDB(ctx)
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-	outID, err := parseInt64List(args[0])
-	if err != nil || len(outID) != 1 {
-		return fmt.Errorf("bad outID")
-	}
-	inID, err := parseInt64List(args[1])
-	if err != nil || len(inID) != 1 {
-		return fmt.Errorf("bad inID")
-	}
-	svc := services.NewTransferService(services.TransferDetectionDeps{
-		TxRepo:     persistence.NewTransactionRepository(db),
-		GroupRepo:  persistence.NewGroupRepository(db),
-		AuditRepo:  persistence.NewAuditLogRepository(db),
-		OverlaySvc: services.NewOverlayService(db.DB),
-	})
-	groupID, err := svc.Confirm(ctx, services.TransferCandidate{
-		OutID: outID[0], InID: inID[0],
-	})
-	if err != nil {
-		return err
-	}
-	fmt.Printf("✓ transfer group %d created (out=%d in=%d)\n", groupID, outID[0], inID[0])
-	return nil
-}
-
 var reimburseLinkCmd = &cobra.Command{
-	Use:   "link <expenseID> <reimbursementID>",
-	Short: "Link an expense with its reimbursement",
+	Use:   "link <txID1> <txID2>",
+	Short: "Link two transactions into a group",
 	Args:  cobra.ExactArgs(2),
 	RunE:  runReimburseLink,
 }

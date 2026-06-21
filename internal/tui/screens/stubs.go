@@ -249,9 +249,8 @@ type linkerCand struct {
 }
 
 type linkerGroup struct {
-	id    int64
-	typ   string
-	note  string
+	id   int64
+	note string
 }
 
 func NewLinker() *Linker { return &Linker{} }
@@ -346,9 +345,9 @@ func (l *Linker) Update(msg tea.Msg) (Screen, tea.Cmd) {
 
 func (l *Linker) View() string {
 	var sb strings.Builder
-	sb.WriteString("  Candidates (j/k · enter: confirm as transfer):\n")
+	sb.WriteString("  Candidates & groups (j/k · enter: link candidate):\n")
 	if len(l.cands) == 0 {
-		sb.WriteString("    (no transfer candidates)\n")
+		sb.WriteString("    (no candidates)\n")
 	}
 	for i, c := range l.cands {
 		marker := "    "
@@ -364,7 +363,7 @@ func (l *Linker) View() string {
 			if l.cursor == len(l.cands)+i {
 				marker = ">   "
 			}
-			fmt.Fprintf(&sb, "%s#%d  %-15s  %s\n", marker, g.id, g.typ, g.note)
+			fmt.Fprintf(&sb, "%s#%d  %s\n", marker, g.id, g.note)
 		}
 	}
 	return sb.String()

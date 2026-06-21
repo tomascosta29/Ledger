@@ -14,15 +14,15 @@ import (
 )
 
 type AnnotationDeps struct {
-	DB          *sql.DB
-	TxRepo      ports.TransactionRepository
-	TagRepo     ports.TagRepository
-	BucketRepo  ports.BucketRepository
+	DB           *sql.DB
+	TxRepo       ports.TransactionRepository
+	TagRepo      ports.TagRepository
+	BucketRepo   ports.BucketRepository
 	CategoryRepo ports.CategoryRepository
-	AuditRepo   ports.AuditLogRepository
-	BatchRepo   ports.ImportBatchRepository
-	OverlaySvc  ports.OverlayService
-	Now         func() time.Time
+	AuditRepo    ports.AuditLogRepository
+	BatchRepo    ports.ImportBatchRepository
+	OverlaySvc   ports.OverlayService
+	Now          func() time.Time
 }
 
 type AnnotationService struct {
@@ -533,18 +533,18 @@ func (s *AnnotationService) Undo(ctx context.Context) error {
 					return fmt.Errorf("delete transaction %d: %w", entry.RecordID, err)
 				}
 
-		case entities.AuditActionCategorize:
-			var catID *int64
-			if entry.OldValue != nil && *entry.OldValue != "" {
-				c, err := s.deps.CategoryRepo.GetByName(ctx, *entry.OldValue)
-				if err != nil {
-					return fmt.Errorf("lookup category %q for undo: %w", *entry.OldValue, err)
+			case entities.AuditActionCategorize:
+				var catID *int64
+				if entry.OldValue != nil && *entry.OldValue != "" {
+					c, err := s.deps.CategoryRepo.GetByName(ctx, *entry.OldValue)
+					if err != nil {
+						return fmt.Errorf("lookup category %q for undo: %w", *entry.OldValue, err)
+					}
+					catID = &c.ID
 				}
-				catID = &c.ID
-			}
-			if err := s.deps.TxRepo.SetCategoryDBTX(ctx, tx, entry.RecordID, catID); err != nil {
-				return fmt.Errorf("restore category for txn %d: %w", entry.RecordID, err)
-			}
+				if err := s.deps.TxRepo.SetCategoryDBTX(ctx, tx, entry.RecordID, catID); err != nil {
+					return fmt.Errorf("restore category for txn %d: %w", entry.RecordID, err)
+				}
 
 			case entities.AuditActionVisibility:
 				hidden := false
@@ -607,6 +607,30 @@ func (s *AnnotationService) Undo(ctx context.Context) error {
 						}
 					}
 				}
+
+			case entities.AuditActionCategoryRename:
+				if entry.OldValue == nil {
+					return fmt.Errorf("category_rename audit row missing old name")
+				}
+				if _, err := tx.ExecContext(ctx,
+					`UPDATE categories SET name = ? WHERE id = ?`,
+					*entry.OldValue, entry.RecordID,
+				); err != nil {
+					return fmt.Errorf("restore category name %q: %w", *entry.OldValue, err)
+				}
+
+			case entities.AuditActionCategoryArchive:
+				if _, err := tx.ExecContext(ctx,
+					`UPDATE categories SET archived_at = NULL WHERE id = ?`,
+					entry.RecordID,
+				); err != nil {
+					return fmt.Errorf("unarchive category %d: %w", entry.RecordID, err)
+				}
+
+			case entities.AuditActionCategoryCreate:
+				// No-op: creation is permanent. Reversing a category_create
+				// would orphan tx.category_id FKs and the audit log would no
+				// longer reproduce the categories table. Archive instead.
 
 			default:
 				return fmt.Errorf("cannot undo action %q: unsupported action type", entry.Action)

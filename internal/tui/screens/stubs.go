@@ -50,7 +50,10 @@ func (c *Categorizer) Init(ctx context.Context, deps Deps) tea.Cmd {
 }
 
 func (c *Categorizer) reload(ctx context.Context) {
-	cat := "Unknown"
+	// "Unknown" is a system state, not a value: the overlay rebuild
+	// denormalizes category_id IS NULL as the empty string. Filter on
+	// '' to surface uncategorized raw transactions.
+	cat := ""
 	opts := ports.OverlayFindOptions{
 		Filters: ports.OverlayFilters{
 			SourceKinds: []ports.SourceKind{ports.SourceRaw},

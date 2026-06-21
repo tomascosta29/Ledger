@@ -1518,6 +1518,96 @@ func runCategoryList(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+var (
+	categoryCreateDescription string
+)
+
+func init() {
+	categoryCmd.AddCommand(categoryCreateCmd)
+	categoryCmd.AddCommand(categoryRenameCmd)
+	categoryCmd.AddCommand(categoryArchiveCmd)
+	categoryCreateCmd.Flags().StringVarP(&categoryCreateDescription, "description", "d", "", "description for the new category")
+}
+
+var categoryCreateCmd = &cobra.Command{
+	Use:   "create <name>",
+	Short: "Create a category",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runCategoryCreate,
+}
+
+func runCategoryCreate(cmd *cobra.Command, args []string) error {
+	ctx := ctxFromCmd(cmd)
+	db, err := openDB(ctx)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	svc := services.NewCategoryService(services.CategoryDeps{
+		DB:          db.DB,
+		CategoryRepo: persistence.NewCategoryRepository(db),
+		AuditRepo:   persistence.NewAuditLogRepository(db),
+	})
+	c, err := svc.Create(ctx, args[0], categoryCreateDescription)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("created category %q (id=%d)\n", c.Name, c.ID)
+	return nil
+}
+
+var categoryRenameCmd = &cobra.Command{
+	Use:   "rename <old> <new>",
+	Short: "Rename a category",
+	Args:  cobra.ExactArgs(2),
+	RunE:  runCategoryRename,
+}
+
+func runCategoryRename(cmd *cobra.Command, args []string) error {
+	ctx := ctxFromCmd(cmd)
+	db, err := openDB(ctx)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	svc := services.NewCategoryService(services.CategoryDeps{
+		DB:          db.DB,
+		CategoryRepo: persistence.NewCategoryRepository(db),
+		AuditRepo:   persistence.NewAuditLogRepository(db),
+	})
+	if err := svc.Rename(ctx, args[0], args[1]); err != nil {
+		return err
+	}
+	fmt.Printf("renamed %q -> %q\n", args[0], args[1])
+	return nil
+}
+
+var categoryArchiveCmd = &cobra.Command{
+	Use:   "archive <name>",
+	Short: "Archive a category (hide from listings; undo restores it)",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runCategoryArchive,
+}
+
+func runCategoryArchive(cmd *cobra.Command, args []string) error {
+	ctx := ctxFromCmd(cmd)
+	db, err := openDB(ctx)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	svc := services.NewCategoryService(services.CategoryDeps{
+		DB:          db.DB,
+		CategoryRepo: persistence.NewCategoryRepository(db),
+		AuditRepo:   persistence.NewAuditLogRepository(db),
+	})
+	if err := svc.Archive(ctx, args[0]); err != nil {
+		return err
+	}
+	fmt.Printf("archived category %q\n", args[0])
+	return nil
+}
+
 func runBucketList(cmd *cobra.Command, args []string) error {
 	ctx := ctxFromCmd(cmd)
 	db, err := openDB(ctx)

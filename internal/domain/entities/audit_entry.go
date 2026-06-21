@@ -19,6 +19,8 @@ const (
 	AuditActionVisibility        = "visibility"
 	AuditActionCategorize        = "categorize"
 	AuditActionCategoryCreate    = "category_create"
+	AuditActionCategoryRename    = "category_rename"
+	AuditActionCategoryArchive   = "category_archive"
 	AuditActionTag               = "tag"
 	AuditActionBucket            = "bucket_assign"
 	AuditActionSplit             = "split"

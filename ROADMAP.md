@@ -149,6 +149,32 @@ life, not in the v1 contract) are at the bottom.
 
 ---
 
+## Next round — post-v1 polish
+
+Operational quality-of-life items that are not in the v1 contract but
+have been felt in real use. Queued before v2 work begins.
+
+- [ADR 0005](./docs/adr/0005-category-as-entity.md) — Promote
+  Category from a TEXT column to a first-class entity. Adds the
+  `ledger category list | create | rename | archive` surface, fixes
+  the typo-permanence and no-rename-primitive problems with the old
+  TEXT column. Rules and recipes are unchanged — they bind by name
+  string, resolved to FK at apply time, so renames are transparent.
+- [ADR 0006](./docs/adr/0006-unify-transfer-reimbursement.md) —
+  Unify Transfer and Reimbursement into a single group type. Drops
+  the `type` column on `transaction_groups`, merges the two CLI
+  verbs into one, simplifies recipes and detection. Audit log still
+  records the action type (`transfer_linked` vs `reimbursement_linked`)
+  for historical accuracy.
+- [ADR 0007](./docs/adr/0007-rule-overwrite-flag.md) — Add
+  `--overwrite` to `ledger rule apply` so the operator can bulk-fix
+  a mistaken rule without N manual recategorize calls. New audit
+  action `RuleApply` distinguishes rule-driven overwrites from
+  operator-driven categorizations. Default behavior (no-overwrite)
+  is unchanged.
+
+---
+
 ## 🔮 v2 (deferred until v1 is in real use)
 
 From [SPEC.md](./SPEC.md) Section 4:
@@ -178,6 +204,9 @@ From SPEC Section 2:
 | 0002   | Overlay rebuild strategy (full on write)   | Accepted |
 | 0003   | DBTX interface for repo methods            | Accepted |
 | 0004   | Tag storage as join table                  | Accepted |
+| 0005   | Category as first-class entity             | Accepted |
+| 0006   | Unify Transfer and Reimbursement groups     | Accepted |
+| 0007   | Rule apply --overwrite flag                 | Accepted |
 
 When a future contributor asks "why was it done this way?", start
 with the ADR index in [docs/adr/README.md](./docs/adr/README.md).

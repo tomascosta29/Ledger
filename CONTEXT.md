@@ -57,15 +57,19 @@ TOML files in `~/.config/ledger/recipes/`.
 _Avoid_: View, filter, report
 
 **Tag**:
-A fine-grained, free-form descriptor attached to a transaction. Multiple
-tags per transaction are allowed. Examples: `rent`, `groceries`, `coffee`.
-The "what specifically" axis of classification.
+An open-vocabulary annotation word attached to a transaction as a query
+axis. Added on demand when the operator wants to slice data a new way.
+Multiple per transaction; the set is unbounded and not curated.
 _Avoid_: Label, keyword
 
 **Category**:
-A small, fixed-ish set of policy classifications — exactly one per
-transaction. The "why" axis: `need`, `want`, `savings`, plus operator
-customs. Used to separate essentials from discretionary spend.
+A curated vocabulary of policy classifications — exactly one per
+transaction. The set is small on purpose and *managed* (added, renamed,
+archived out-of-band) rather than freely extended. "Unknown" is a
+system state, not a value: a transaction is unknown when no category
+applies. The distinction from Tag is the *shape of the set*, not the
+*kind of meaning* — Tag is open and added per-tx, Category is curated
+and managed.
 _Avoid_: Class, type
 
 **Bucket**:
@@ -76,9 +80,9 @@ does this fund" axis. Examples: `vacation-2026`, `apartment-reno`,
 _Avoid_: Envelope, project
 
 **Reversal**:
-A `Reimbursement` group whose members are the same counterparty and
-cancel in amount, so the original expense nets to zero in summaries.
-Treated as `excluded` in the summary recipe rather than `offset`, since
-the operator's intent is "this never should have counted as my spending."
+A group of transactions whose members cancel in amount, so the original
+expense nets to zero in summaries.
+Treated as `excluded` in the summary recipe rather than `offset`, since the
+operator's intent is "this never should have counted as my spending."
 Persisted as a group, not detected at query time.
 _Avoid_: Bounce, chargeback, refund

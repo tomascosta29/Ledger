@@ -12,6 +12,9 @@ would cause us to revisit.
 | 0002   | [Overlay rebuild strategy](./0002-overlay-rebuild-strategy.md)      | Accepted |
 | 0003   | [DBTX interface for repo methods](./0003-dbtx-interface.md)         | Accepted |
 | 0004   | [Tag storage as join table](./0004-tag-storage.md)                  | Accepted |
+| 0005   | [Category as first-class entity](./0005-category-as-entity.md)     | Accepted |
+| 0006   | [Unify Transfer and Reimbursement groups](./0006-unify-transfer-reimbursement.md) | Accepted |
+| 0007   | [Rule apply --overwrite flag](./0007-rule-overwrite-flag.md)             | Accepted |
 
 ## When to write a new ADR
 

@@ -252,6 +252,45 @@ TestPreviewManager ./internal/tui/screens/...`).
 
 ---
 
+## ✓ Done — v1.3 (tag v1.3.0)
+
+- [ADR 0009](./docs/adr/0009-drop-categorizer.md) — Drop the
+  Categorizer screen. Manager absorbs its responsibilities.
+  Sidebar shrinks from 5 to 4 entries (Manager, Linker, Budget,
+  Recipes); number keys `1`–`4`. Manager gains:
+  - **Single-row annotation**: `c` / `b` / `t` open an input
+    prompt on the cursor row. `Enter` applies, `Esc` cancels.
+    Footer swaps to `Input: <verb>` + `Enter apply · Esc cancel
+    · Bksp edit`.
+  - **Bulk annotation**: `C` / `B` / `T` open the same prompt on
+    the selection. Footer swaps to `Bulk: <verb>`.
+  - **Jump to next Unknown**: `n` moves the cursor to the next
+    row with empty `category`. Recovers the Categorizer triage
+    loop without a separate screen.
+  - **Link selected**: `l` runs transfer detection on the
+    selection and confirms any pair where both the out-tx and
+    in-tx are in the selection. Brings the Linker's main
+    workflow into Manager for the common case.
+- `AnnotationService.SetBucket(ctx, txID, bucketName)` and
+  `BulkSetBucket(ctx, ids, bucketName)` added — the existing
+  `Categorize` requires a non-empty category, which would fail
+  on Unknown rows. Bucket-only annotation is a real workflow.
+  Audit action `bucket_assign` was already in place and is
+  handled by the existing Undo.
+- Manager footer (Normal, nothing selected) reorders so the
+  single-row keys come first; bulk keys drop first at narrow
+  widths:
+  `j/k nav · n unk · c cat · t tag · b bkt · l link · / filter ·
+   x select · C cat·N · T tag·N · H hide · U undo · ? help`.
+  Selection replaces this with count badges:
+  `[x] toggle · C cat N · B bkt N · T tag N · l link N · H hide
+   N · U undo · X clear`.
+
+No schema changes. No new dependencies. Number keys renumbered
+(`5` key is now unused — revisit when the sixth screen arrives).
+
+---
+
 ## 🔮 v2 (deferred until v1 is in real use)
 
 From [SPEC.md](./SPEC.md) Section 4:
@@ -285,6 +324,7 @@ From SPEC Section 2:
 | 0006   | Unify Transfer and Reimbursement groups     | Accepted |
 | 0007   | Rule apply --overwrite flag                 | Accepted |
 | 0008   | TUI visual chrome                           | Accepted |
+| 0009   | Drop Categorizer screen                     | Accepted |
 
 When a future contributor asks "why was it done this way?", start
 with the ADR index in [docs/adr/README.md](./docs/adr/README.md).

@@ -3,6 +3,7 @@ package screens
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -365,21 +366,58 @@ func (m *Manager) applyBulkHide(ctx context.Context) {
 	m.reload(ctx)
 }
 
-// linkSelected runs transfer detection on the selected rows and
-// confirms any pair where both the out-tx and in-tx are in the
-// selection. Returns the Screen for the bubbletea return contract;
-// statusMsg carries the result and distinguishes the three outcomes
-// the operator can observe:
-//   - at least one pair was confirmed ("linked N pair(s)")
-//   - some candidates matched the selection but Confirm failed
-//     ("linked N, M failed: <err>")
-//   - no candidates matched the selection at all
-//     ("no transfer candidate between selected rows")
-// so "linked 0" is never confused with "linked some".
+// linkSelected is the entry point for the `l` key. Behavior splits
+// by selection size:
+//   - 2 selected: manual link. The operator has already chosen the
+//     pair; we link them as from/to based on amount sign (date as
+//     tiebreaker if both are same sign). No detection is run —
+//     "no transfer candidate" is the wrong answer when the operator
+//     has explicitly picked two rows.
+//   - 3+ selected: run transfer detection, confirm any pair where
+//     both txs are in the selection. Detection's amount/currency/
+//     window matching is appropriate for batch auto-pairing.
+//
+// statusMsg always reflects what happened: linked OK, partial
+// success, all failed, or no candidates (3+ case).
 func (m *Manager) linkSelected(ctx context.Context) (Screen, tea.Cmd) {
 	if len(m.selected) < 2 {
 		m.statusMsg = "link: select 2+ rows with x first"
 		return m, nil
+	}
+	ids := m.selectedIDs()
+	if len(ids) == 2 {
+		return m.linkManual(ctx, ids)
+	}
+	return m.linkAutoDetect(ctx, ids)
+}
+
+// linkManual links exactly the two selected transactions as a
+// from/to pair. from/to is decided by amount sign: the negative
+// one is the source ("from"), the positive one is the destination
+// ("to"). When both have the same sign, the earlier EffectiveDate
+// wins. This is the path the operator's manual `x x l` flow hits.
+func (m *Manager) linkManual(ctx context.Context, ids []int64) (Screen, tea.Cmd) {
+	a, err := m.deps.TxRepo.GetByID(ctx, ids[0])
+	if err != nil {
+		m.statusMsg = "link load " + i64Str(ids[0]) + ": " + err.Error()
+		return m, nil
+	}
+	b, err := m.deps.TxRepo.GetByID(ctx, ids[1])
+	if err != nil {
+		m.statusMsg = "link load " + i64Str(ids[1]) + ": " + err.Error()
+		return m, nil
+	}
+	fromID, toID := ids[0], ids[1]
+	switch {
+	case a.Amount.IsNegative() && b.Amount.IsPositive():
+		fromID, toID = a.ID, b.ID
+	case a.Amount.IsPositive() && b.Amount.IsNegative():
+		fromID, toID = b.ID, a.ID
+	case a.EffectiveDate <= b.EffectiveDate:
+		// Both same sign: earlier is from.
+		fromID, toID = a.ID, b.ID
+	default:
+		fromID, toID = b.ID, a.ID
 	}
 	svc := services.NewTransferService(services.TransferDetectionDeps{
 		TxRepo:    m.deps.TxRepo,
@@ -387,6 +425,38 @@ func (m *Manager) linkSelected(ctx context.Context) (Screen, tea.Cmd) {
 		AuditRepo: m.deps.AuditRepo,
 		OverlaySvc: m.deps.OverlaySvc,
 	})
+	if _, err := svc.Confirm(ctx, services.TransferCandidate{
+		OutID: fromID,
+		InID:  toID,
+	}); err != nil {
+		m.statusMsg = "link: " + err.Error()
+		return m, nil
+	}
+	m.selected = make(map[int64]bool)
+	// Reload first (which overwrites statusMsg with "showing N"),
+	// then set the link-specific message so the operator sees the
+	// outcome instead of the row count.
+	m.reload(ctx)
+	m.statusMsg = fmt.Sprintf("linked %d → %d", fromID, toID)
+	return m, nil
+}
+
+// linkAutoDetect runs the existing transfer detection and confirms
+// any candidate where both endpoints are in the selection. Used
+// when 3+ rows are selected (batch mode). Detection's amount/
+// currency/window matching applies — this is the smart path, but
+// it requires the selected rows to actually look like a transfer.
+func (m *Manager) linkAutoDetect(ctx context.Context, ids []int64) (Screen, tea.Cmd) {
+	svc := services.NewTransferService(services.TransferDetectionDeps{
+		TxRepo:    m.deps.TxRepo,
+		GroupRepo: m.deps.GroupRepo,
+		AuditRepo: m.deps.AuditRepo,
+		OverlaySvc: m.deps.OverlaySvc,
+	})
+	selSet := make(map[int64]bool, len(ids))
+	for _, id := range ids {
+		selSet[id] = true
+	}
 	cands, err := svc.Detect(ctx)
 	if err != nil {
 		m.statusMsg = "link detect: " + err.Error()
@@ -397,7 +467,7 @@ func (m *Manager) linkSelected(ctx context.Context) (Screen, tea.Cmd) {
 	matched := 0
 	var lastErr error
 	for _, c := range cands {
-		if !m.selected[c.OutID] || !m.selected[c.InID] {
+		if !selSet[c.OutID] || !selSet[c.InID] {
 			continue
 		}
 		matched++
@@ -412,6 +482,10 @@ func (m *Manager) linkSelected(ctx context.Context) (Screen, tea.Cmd) {
 		linked++
 	}
 	m.selected = make(map[int64]bool)
+	// Reload first, then set the outcome-specific message so the
+	// "linked N" / "no candidates" / etc. survives reload's
+	// "showing N" overwrite.
+	m.reload(ctx)
 	switch {
 	case linked > 0 && failed == 0:
 		m.statusMsg = fmt.Sprintf("linked %d pair(s)", linked)
@@ -424,7 +498,6 @@ func (m *Manager) linkSelected(ctx context.Context) (Screen, tea.Cmd) {
 	default:
 		m.statusMsg = "no pairs linked"
 	}
-	m.reload(ctx)
 	return m, nil
 }
 
@@ -629,6 +702,10 @@ func coalesce(s, fallback string) string {
 		return fallback
 	}
 	return s
+}
+
+func i64Str(n int64) string {
+	return strconv.FormatInt(n, 10)
 }
 
 // truncate returns s clipped to at most n runes, with an ellipsis if

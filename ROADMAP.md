@@ -149,29 +149,52 @@ life, not in the v1 contract) are at the bottom.
 
 ---
 
-## Next round — post-v1 polish
+## ✓ Done — v1.1 polish (tag v1.1.0)
 
-Operational quality-of-life items that are not in the v1 contract but
-have been felt in real use. Queued before v2 work begins.
+Operational quality-of-life items that were not in the v1 contract
+but were felt in real use. Shipped as two parallel tracks.
+
+### Track A — Categories
 
 - [ADR 0005](./docs/adr/0005-category-as-entity.md) — Promote
-  Category from a TEXT column to a first-class entity. Adds the
-  `ledger category list | create | rename | archive` surface, fixes
-  the typo-permanence and no-rename-primitive problems with the old
-  TEXT column. Rules and recipes are unchanged — they bind by name
-  string, resolved to FK at apply time, so renames are transparent.
-- [ADR 0006](./docs/adr/0006-unify-transfer-reimbursement.md) —
-  Unify Transfer and Reimbursement into a single group type. Drops
-  the `type` column on `transaction_groups`, merges the two CLI
-  verbs into one, simplifies recipes and detection. Audit log still
-  records the action type (`transfer_linked` vs `reimbursement_linked`)
-  for historical accuracy.
+  Category from a TEXT column to a first-class entity. Migration
+  0009 backfills distinct non-`Unknown` values as rows;
+  `Unknown` becomes a system state (`category_id IS NULL`), not a
+  value. `ledger category list | create | rename | archive` write
+  one audit row each; `ledger undo` reverses rename (restores name)
+  and archive (clears `archived_at`). TUI Categorizer filters on
+  `category = ''` (the overlay denormalizes `category_id IS NULL`
+  as the empty string). Rules and recipes are unchanged — they
+  bind by name string, resolved to FK at apply time, so renames
+  are transparent.
 - [ADR 0007](./docs/adr/0007-rule-overwrite-flag.md) — Add
   `--overwrite` to `ledger rule apply` so the operator can bulk-fix
   a mistaken rule without N manual recategorize calls. New audit
   action `RuleApply` distinguishes rule-driven overwrites from
   operator-driven categorizations. Default behavior (no-overwrite)
   is unchanged.
+
+### Track B — Groups
+
+- [ADR 0006](./docs/adr/0006-unify-transfer-reimbursement.md) —
+  Unify Transfer and Reimbursement into a single group type. Drops
+  the `type` column on `transaction_groups`, merges the two CLI
+  verbs into one (`ledger reimburse link <a> <b>` is the only link
+  verb; `ledger transfers detect/confirm` removed), simplifies
+  recipes and detection. Audit log still records the action type
+  (`transfer_linked` vs `reimbursement_linked`) for historical
+  accuracy. Overlay `source_kind` unified to `group`; recipes get a
+  new `source_kind` clause field for `exclude groups`.
+
+### Migrations added in v1.1
+
+- `0009_categories.sql` — `categories` table + nullable
+  `transactions.category_id` FK + backfill from distinct TEXT
+  values + drop TEXT column.
+- `0010_groups_drop_type.sql` — drop `transaction_groups.type`.
+- `0011_overlay_unify_source_kind.sql` — rewrite existing overlay
+  rows from `transfer_group`/`reimbursement_group` to `group` and
+  rebuild the table with the relaxed CHECK constraint.
 
 ---
 

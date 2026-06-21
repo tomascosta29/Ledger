@@ -21,6 +21,7 @@ const (
 	AuditActionCategoryCreate    = "category_create"
 	AuditActionCategoryRename    = "category_rename"
 	AuditActionCategoryArchive   = "category_archive"
+	AuditActionRuleApply         = "rule_apply"
 	AuditActionTag               = "tag"
 	AuditActionBucket            = "bucket_assign"
 	AuditActionSplit             = "split"

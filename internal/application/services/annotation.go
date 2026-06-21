@@ -96,6 +96,71 @@ func (s *AnnotationService) Categorize(ctx context.Context, txID int64, category
 	})
 }
 
+// CategorizeViaRule mirrors Categorize but writes RuleApply audit rows
+// instead of Categorize/Bucket. Used by RuleService.Apply when --overwrite
+// is set, so the audit log distinguishes operator-driven annotations
+// from rule-driven bulk fixes. The caller is responsible for enforcing
+// any "no overwrite" gate; this method always writes the change.
+func (s *AnnotationService) CategorizeViaRule(ctx context.Context, txID int64, category string, bucketName *string) error {
+	if category == "" {
+		return errors.New("category is empty")
+	}
+	old, err := s.deps.TxRepo.GetByID(ctx, txID)
+	if err != nil {
+		return fmt.Errorf("load transaction: %w", err)
+	}
+	newCatID, err := s.resolveCategoryID(ctx, category)
+	if err != nil {
+		return err
+	}
+	bucket, err := s.resolveBucket(ctx, bucketName, string(old.Amount.Currency))
+	if err != nil {
+		return err
+	}
+
+	oldName := s.categoryNameOrEmpty(ctx, old.CategoryID)
+
+	return s.runTx(ctx, func(tx *sql.Tx) error {
+		now := s.deps.Now()
+		if !sameCategoryID(old.CategoryID, newCatID) {
+			if err := s.deps.TxRepo.SetCategoryDBTX(ctx, tx, txID, newCatID); err != nil {
+				return err
+			}
+			if _, err := s.deps.AuditRepo.AppendDBTX(ctx, tx, &entities.AuditEntry{
+				TableName: "transactions",
+				RecordID:  txID,
+				Action:    entities.AuditActionRuleApply,
+				Field:     strPtr("category"),
+				OldValue:  strPtr(oldName),
+				NewValue:  strPtr(category),
+				CreatedAt: now,
+			}); err != nil {
+				return err
+			}
+		}
+		if bucket != nil && !sameBucketID(old.BucketID, &bucket.ID) {
+			if err := s.deps.TxRepo.SetBucketDBTX(ctx, tx, txID, &bucket.ID); err != nil {
+				return err
+			}
+			if _, err := s.deps.AuditRepo.AppendDBTX(ctx, tx, &entities.AuditEntry{
+				TableName: "transactions",
+				RecordID:  txID,
+				Action:    entities.AuditActionRuleApply,
+				Field:     strPtr("bucket_id"),
+				OldValue:  bucketIDToStringPtr(old.BucketID),
+				NewValue:  bucketIDToStringPtr(&bucket.ID),
+				CreatedAt: now,
+			}); err != nil {
+				return err
+			}
+		}
+		if sameCategoryID(old.CategoryID, newCatID) && (bucket == nil || sameBucketID(old.BucketID, &bucket.ID)) {
+			return nil
+		}
+		return s.deps.OverlaySvc.RebuildWithTx(ctx, tx)
+	})
+}
+
 func (s *AnnotationService) SetHidden(ctx context.Context, txID int64, hidden bool) error {
 	old, err := s.deps.TxRepo.GetByID(ctx, txID)
 	if err != nil {
@@ -533,18 +598,18 @@ func (s *AnnotationService) Undo(ctx context.Context) error {
 					return fmt.Errorf("delete transaction %d: %w", entry.RecordID, err)
 				}
 
-			case entities.AuditActionCategorize:
-				var catID *int64
-				if entry.OldValue != nil && *entry.OldValue != "" {
-					c, err := s.deps.CategoryRepo.GetByName(ctx, *entry.OldValue)
-					if err != nil {
-						return fmt.Errorf("lookup category %q for undo: %w", *entry.OldValue, err)
-					}
-					catID = &c.ID
+		case entities.AuditActionCategorize:
+			var catID *int64
+			if entry.OldValue != nil && *entry.OldValue != "" {
+				c, err := s.deps.CategoryRepo.GetByNameDBTX(ctx, tx, *entry.OldValue)
+				if err != nil {
+					return fmt.Errorf("lookup category %q for undo: %w", *entry.OldValue, err)
 				}
-				if err := s.deps.TxRepo.SetCategoryDBTX(ctx, tx, entry.RecordID, catID); err != nil {
-					return fmt.Errorf("restore category for txn %d: %w", entry.RecordID, err)
-				}
+				catID = &c.ID
+			}
+			if err := s.deps.TxRepo.SetCategoryDBTX(ctx, tx, entry.RecordID, catID); err != nil {
+				return fmt.Errorf("restore category for txn %d: %w", entry.RecordID, err)
+			}
 
 			case entities.AuditActionVisibility:
 				hidden := false
@@ -608,16 +673,47 @@ func (s *AnnotationService) Undo(ctx context.Context) error {
 					}
 				}
 
-			case entities.AuditActionCategoryRename:
-				if entry.OldValue == nil {
-					return fmt.Errorf("category_rename audit row missing old name")
+		case entities.AuditActionCategoryRename:
+			if entry.OldValue == nil {
+				return fmt.Errorf("category_rename audit row missing old name")
+			}
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE categories SET name = ? WHERE id = ?`,
+				*entry.OldValue, entry.RecordID,
+			); err != nil {
+				return fmt.Errorf("restore category name %q: %w", *entry.OldValue, err)
+			}
+
+		case entities.AuditActionRuleApply:
+			// Identical reverse logic to AuditActionCategorize/Bucket:
+			// restore the prior value using OldValue / the resolved name.
+			// The action may have been triggered by --overwrite, but the
+			// stored old/new are still the right things to swap back.
+			if entry.Field != nil && *entry.Field == "category" {
+				var catID *int64
+				if entry.OldValue != nil && *entry.OldValue != "" {
+					c, err := s.deps.CategoryRepo.GetByNameDBTX(ctx, tx, *entry.OldValue)
+					if err != nil {
+						return fmt.Errorf("lookup category %q for undo: %w", *entry.OldValue, err)
+					}
+					catID = &c.ID
 				}
-				if _, err := tx.ExecContext(ctx,
-					`UPDATE categories SET name = ? WHERE id = ?`,
-					*entry.OldValue, entry.RecordID,
-				); err != nil {
-					return fmt.Errorf("restore category name %q: %w", *entry.OldValue, err)
+				if err := s.deps.TxRepo.SetCategoryDBTX(ctx, tx, entry.RecordID, catID); err != nil {
+					return fmt.Errorf("restore category for txn %d: %w", entry.RecordID, err)
 				}
+			} else if entry.Field != nil && *entry.Field == "bucket_id" {
+				var bucketID *int64
+				if entry.OldValue != nil && *entry.OldValue != "" {
+					id, err := strconv.ParseInt(*entry.OldValue, 10, 64)
+					if err != nil {
+						return fmt.Errorf("parse old bucket id %q: %w", *entry.OldValue, err)
+					}
+					bucketID = &id
+				}
+				if err := s.deps.TxRepo.SetBucketDBTX(ctx, tx, entry.RecordID, bucketID); err != nil {
+					return fmt.Errorf("restore bucket for txn %d: %w", entry.RecordID, err)
+				}
+			}
 
 			case entities.AuditActionCategoryArchive:
 				if _, err := tx.ExecContext(ctx,

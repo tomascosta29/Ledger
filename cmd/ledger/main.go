@@ -868,6 +868,14 @@ var ruleApplyCmd = &cobra.Command{
 	RunE:  runRuleApply,
 }
 
+var (
+	ruleApplyOverwrite bool
+)
+
+func init() {
+	ruleApplyCmd.Flags().BoolVar(&ruleApplyOverwrite, "overwrite", false, "allow rules to change existing category / bucket / tag assignments (audit-logged as rule_apply)")
+}
+
 func runRuleApply(cmd *cobra.Command, args []string) error {
 	ctx := ctxFromCmd(cmd)
 	db, err := openDB(ctx)
@@ -894,12 +902,17 @@ func runRuleApply(cmd *cobra.Command, args []string) error {
 		RuleRepo:   persistence.NewRuleRepository(db),
 		AnnService: annSvc,
 	})
-	result, err := ruleSvc.Apply(ctx)
+	result, err := ruleSvc.Apply(ctx, ruleApplyOverwrite)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("✓ rules applied: %d matched, %d applied, %d skipped (no-op)\n",
-		result.Matched, result.Applied, result.Skipped)
+	if ruleApplyOverwrite {
+		fmt.Printf("✓ rules applied (overwrite): %d matched, %d applied, %d skipped (no-op)\n",
+			result.Matched, result.Applied, result.Skipped)
+	} else {
+		fmt.Printf("✓ rules applied: %d matched, %d applied, %d skipped (no-op)\n",
+			result.Matched, result.Applied, result.Skipped)
+	}
 	for id, n := range result.ByRule {
 		if n == 0 {
 			continue

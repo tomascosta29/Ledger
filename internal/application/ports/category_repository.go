@@ -9,7 +9,9 @@ import (
 type CategoryRepository interface {
 	List(ctx context.Context, includeArchived bool) ([]*entities.Category, error)
 	GetByID(ctx context.Context, id int64) (*entities.Category, error)
+	GetByIDDBTX(ctx context.Context, db DBTX, id int64) (*entities.Category, error)
 	GetByName(ctx context.Context, name string) (*entities.Category, error)
+	GetByNameDBTX(ctx context.Context, db DBTX, name string) (*entities.Category, error)
 	Create(ctx context.Context, c *entities.Category) (int64, error)
 	CreateDBTX(ctx context.Context, db DBTX, c *entities.Category) (int64, error)
 	Rename(ctx context.Context, id int64, newName string) error

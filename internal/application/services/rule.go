@@ -43,7 +43,7 @@ func NewRuleService(d RuleDeps) *RuleService {
 	return &RuleService{deps: d}
 }
 
-func (s *RuleService) Apply(ctx context.Context) (*RuleApplyResult, error) {
+func (s *RuleService) Apply(ctx context.Context, overwrite bool) (*RuleApplyResult, error) {
 	rules, err := s.deps.RuleRepo.List(ctx, true)
 	if err != nil {
 		return nil, fmt.Errorf("list rules: %w", err)
@@ -62,7 +62,7 @@ func (s *RuleService) Apply(ctx context.Context) (*RuleApplyResult, error) {
 				continue
 			}
 			result.Matched++
-			applied, err := s.applyOne(ctx, tx, rule)
+			applied, err := s.applyOne(ctx, tx, rule, overwrite)
 			if err != nil {
 				result.Errors = append(result.Errors, fmt.Errorf("rule %q on txn %d: %w", rule.Name, tx.ID, err))
 				continue
@@ -99,11 +99,17 @@ func (s *RuleService) matches(tx *entities.Transaction, rule *entities.Rule) boo
 	return true
 }
 
-func (s *RuleService) applyOne(ctx context.Context, tx *entities.Transaction, rule *entities.Rule) (bool, error) {
+func (s *RuleService) applyOne(ctx context.Context, tx *entities.Transaction, rule *entities.Rule, overwrite bool) (bool, error) {
 	did := false
-	if rule.SetCategory != nil && tx.CategoryID == nil {
-		if err := s.deps.AnnService.Categorize(ctx, tx.ID, *rule.SetCategory, nil); err != nil {
-			return false, err
+	if rule.SetCategory != nil && (overwrite || tx.CategoryID == nil) {
+		if overwrite {
+			if err := s.deps.AnnService.CategorizeViaRule(ctx, tx.ID, *rule.SetCategory, nil); err != nil {
+				return false, err
+			}
+		} else {
+			if err := s.deps.AnnService.Categorize(ctx, tx.ID, *rule.SetCategory, nil); err != nil {
+				return false, err
+			}
 		}
 		// Re-read the FK the service resolved, so the in-memory tx is in
 		// sync for downstream checks (e.g. bucket on same rule pass).
@@ -112,7 +118,7 @@ func (s *RuleService) applyOne(ctx context.Context, tx *entities.Transaction, ru
 		}
 		did = true
 	}
-	if rule.SetBucketID != nil && tx.BucketID == nil {
+	if rule.SetBucketID != nil && (overwrite || tx.BucketID == nil) {
 		bucketName := s.bucketName(ctx, *rule.SetBucketID)
 		if bucketName == "" {
 			return did, nil
@@ -123,8 +129,14 @@ func (s *RuleService) applyOne(ctx context.Context, tx *entities.Transaction, ru
 				currentCategory = c.Name
 			}
 		}
-		if err := s.deps.AnnService.Categorize(ctx, tx.ID, currentCategory, &bucketName); err != nil {
-			return false, err
+		if overwrite {
+			if err := s.deps.AnnService.CategorizeViaRule(ctx, tx.ID, currentCategory, &bucketName); err != nil {
+				return false, err
+			}
+		} else {
+			if err := s.deps.AnnService.Categorize(ctx, tx.ID, currentCategory, &bucketName); err != nil {
+				return false, err
+			}
 		}
 		did = true
 	}
@@ -132,9 +144,10 @@ func (s *RuleService) applyOne(ctx context.Context, tx *entities.Transaction, ru
 		existing, _ := s.deps.TagRepo.ListByTransaction(ctx, tx.ID)
 		toAdd := []string{}
 		for _, t := range rule.AddTags {
-			if !contains(existing, t) {
-				toAdd = append(toAdd, t)
+			if !overwrite && contains(existing, t) {
+				continue
 			}
+			toAdd = append(toAdd, t)
 		}
 		if len(toAdd) > 0 {
 			if err := s.deps.AnnService.BulkAddTags(ctx, []int64{tx.ID}, toAdd); err != nil {

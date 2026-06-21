@@ -43,7 +43,11 @@ func (r *CategoryRepository) List(ctx context.Context, includeArchived bool) ([]
 }
 
 func (r *CategoryRepository) GetByID(ctx context.Context, id int64) (*entities.Category, error) {
-	row := r.db.QueryRowContext(ctx,
+	return r.GetByIDDBTX(ctx, r.db, id)
+}
+
+func (r *CategoryRepository) GetByIDDBTX(ctx context.Context, db ports.DBTX, id int64) (*entities.Category, error) {
+	row := db.QueryRowContext(ctx,
 		`SELECT id, name, description, archived_at, created_at
 		 FROM categories WHERE id = ?`, id)
 	return scanCategory(row)

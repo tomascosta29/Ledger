@@ -14,6 +14,10 @@ import (
 	"github.com/tomascosta29/Ledger/internal/tui/styles"
 )
 
+// _ ensures ports is referenced even if the only use is in managerRow's
+// SourceKind field, so the import is not flagged by goimports.
+var _ ports.SourceKind
+
 // Manager is the transaction list screen (filter DSL, j/k nav, ...).
 // Single screen after v1.3 — absorbs Categorizer's single-row
 // annotation (c/b/t) plus bulk on selection (C/B/T) and a quick
@@ -39,12 +43,15 @@ type Manager struct {
 }
 
 type managerRow struct {
-	id     int64
-	date   string
-	amount string
-	cat    string
-	desc   string
-	rawID  *int64
+	id        int64
+	date      string
+	amount    string
+	cat       string
+	desc      string
+	rawID     *int64
+	linked    bool             // true when source_kind == "group"
+	groupID   *int64           // non-nil if linked
+	sourceKind ports.SourceKind // raw, split_child, split_header, group
 }
 
 type inputKind int
@@ -97,12 +104,15 @@ func (m *Manager) reload(ctx context.Context) {
 	m.rows = m.rows[:0]
 	for _, r := range rows {
 		m.rows = append(m.rows, managerRow{
-			id:     r.ID,
-			date:   r.EffectiveDate,
-			amount: r.Amount.DecimalString() + " " + string(r.Amount.Currency),
-			cat:    r.Category,
-			desc:   r.Description,
-			rawID:  r.RawTransactionID,
+			id:         r.ID,
+			date:       r.EffectiveDate,
+			amount:     r.Amount.DecimalString() + " " + string(r.Amount.Currency),
+			cat:        r.Category,
+			desc:       r.Description,
+			rawID:      r.RawTransactionID,
+			linked:     r.SourceKind == ports.SourceGroup,
+			groupID:    r.GroupID,
+			sourceKind: r.SourceKind,
 		})
 	}
 	if m.cursor >= len(m.rows) {
@@ -339,38 +349,6 @@ func (m *Manager) selectedIDs() []int64 {
 	return ids
 }
 
-func (m *Manager) applyBulkCategorize(ctx context.Context, cat string) error {
-	ids := m.selectedIDs()
-	if len(ids) == 0 {
-		m.statusMsg = "no selection (press x on a row to select)"
-		return nil
-	}
-	svc := annSvcFromDeps(m.deps)
-	if err := svc.BulkCategorize(ctx, ids, cat, nil); err != nil {
-		return err
-	}
-	m.statusMsg = fmt.Sprintf("categorized %d → %s", len(ids), cat)
-	m.selected = make(map[int64]bool)
-	m.reload(ctx)
-	return nil
-}
-
-func (m *Manager) applyBulkTag(ctx context.Context, tag string) error {
-	ids := m.selectedIDs()
-	if len(ids) == 0 {
-		m.statusMsg = "no selection (press x on a row to select)"
-		return nil
-	}
-	svc := annSvcFromDeps(m.deps)
-	if err := svc.BulkAddTags(ctx, ids, []string{tag}); err != nil {
-		return err
-	}
-	m.statusMsg = fmt.Sprintf("tagged %d +%s", len(ids), tag)
-	m.selected = make(map[int64]bool)
-	m.reload(ctx)
-	return nil
-}
-
 func (m *Manager) applyBulkHide(ctx context.Context) {
 	ids := m.selectedIDs()
 	if len(ids) == 0 {
@@ -390,7 +368,14 @@ func (m *Manager) applyBulkHide(ctx context.Context) {
 // linkSelected runs transfer detection on the selected rows and
 // confirms any pair where both the out-tx and in-tx are in the
 // selection. Returns the Screen for the bubbletea return contract;
-// statusMsg carries the result.
+// statusMsg carries the result and distinguishes the three outcomes
+// the operator can observe:
+//   - at least one pair was confirmed ("linked N pair(s)")
+//   - some candidates matched the selection but Confirm failed
+//     ("linked N, M failed: <err>")
+//   - no candidates matched the selection at all
+//     ("no transfer candidate between selected rows")
+// so "linked 0" is never confused with "linked some".
 func (m *Manager) linkSelected(ctx context.Context) (Screen, tea.Cmd) {
 	if len(m.selected) < 2 {
 		m.statusMsg = "link: select 2+ rows with x first"
@@ -408,21 +393,37 @@ func (m *Manager) linkSelected(ctx context.Context) (Screen, tea.Cmd) {
 		return m, nil
 	}
 	linked := 0
+	failed := 0
+	matched := 0
+	var lastErr error
 	for _, c := range cands {
 		if !m.selected[c.OutID] || !m.selected[c.InID] {
 			continue
 		}
+		matched++
 		if _, err := svc.Confirm(ctx, services.TransferCandidate{
 			OutID: c.OutID,
 			InID:  c.InID,
 		}); err != nil {
-			m.statusMsg = fmt.Sprintf("link %d↔%d: %s", c.OutID, c.InID, err.Error())
+			failed++
+			lastErr = err
 			continue
 		}
 		linked++
 	}
 	m.selected = make(map[int64]bool)
-	m.statusMsg = fmt.Sprintf("linked %d pair(s)", linked)
+	switch {
+	case linked > 0 && failed == 0:
+		m.statusMsg = fmt.Sprintf("linked %d pair(s)", linked)
+	case linked > 0 && failed > 0:
+		m.statusMsg = fmt.Sprintf("linked %d, %d failed: %s", linked, failed, lastErr.Error())
+	case linked == 0 && failed > 0:
+		m.statusMsg = fmt.Sprintf("link failed: %s", lastErr.Error())
+	case matched == 0:
+		m.statusMsg = "no transfer candidate between selected rows"
+	default:
+		m.statusMsg = "no pairs linked"
+	}
 	m.reload(ctx)
 	return m, nil
 }
@@ -549,12 +550,19 @@ func (m *Manager) renderRow(i int, r managerRow, width int) string {
 	if isSel {
 		selChar = styles.SelectionGlyph
 	}
+	linkChar := styles.InactiveLinkedGlyph
+	if r.linked {
+		linkChar = styles.LinkedGlyph
+	}
 
 	idW := 5
 	dateW := 10
 	amountW := 13
 	catW := 10
-	descW := width - (1 + 1 + 3 + 1 + idW + 2 + dateW + 2 + amountW + 2 + catW + 2)
+	// Column widths: 1 link + 1 space + 1 cursor + 1 space +
+	// 3 sel + 1 space + 5 id + 2 + 10 date + 2 + 13 amount +
+	// 2 + 10 cat + 2 + desc.
+	descW := width - (1 + 1 + 1 + 1 + 3 + 1 + idW + 2 + dateW + 2 + amountW + 2 + catW + 2)
 	if descW < 4 {
 		descW = 4
 	}
@@ -568,7 +576,12 @@ func (m *Manager) renderRow(i int, r managerRow, width int) string {
 	}
 	desc := truncate(r.desc, descW)
 
-	row := cursorChar + " " + selChar + " " + id + "  " + date + "  " + amount + "  " + cat + "  " + desc
+	// The link glyph sits at the leftmost column so it stays put
+	// when the cursor moves. Color it Accent; the row's own style
+	// (cursor/selection) will take precedence in the terminal
+	// because we render glyph inside the row string.
+	linkStyled := styles.LinkedGlyphStyle.Render(linkChar)
+	row := linkStyled + " " + cursorChar + " " + selChar + " " + id + "  " + date + "  " + amount + "  " + cat + "  " + desc
 	return rowStyle.Render(row)
 }
 

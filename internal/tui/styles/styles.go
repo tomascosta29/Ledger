@@ -19,6 +19,12 @@ const (
 	SelectionGlyph = "[x]"
 	// InactiveSelGlyph is the empty slot in the selection column.
 	InactiveSelGlyph = "   "
+	// LinkedGlyph marks a row that is part of a transfer/reimbursement
+	// group (the result of `l` link or the Linker screen confirming a
+	// candidate).
+	LinkedGlyph = "⇄"
+	// InactiveLinkedGlyph is the empty slot in the link column.
+	InactiveLinkedGlyph = " "
 	// RuleChar is the horizontal divider character.
 	RuleChar = "─"
 	// BulletChar separates key hints in the footer.
@@ -98,6 +104,20 @@ var (
 	CursorSelectedRow = lipgloss.NewStyle().
 				Reverse(true).
 				Background(Surface)
+
+	// LinkedGlyphStyle is the color of the ⇄ marker on rows that
+	// are part of a transfer/reimbursement group. Accent so it
+	// reads as a positive state (you successfully linked this).
+	LinkedGlyphStyle = lipgloss.NewStyle().
+				Foreground(Accent)
+
+	// LinkedRow is a subtle accent-tinted background for linked
+	// rows that aren't otherwise highlighted (no cursor, no
+	// selection). The tint makes "this is grouped" visible from
+	// across the screen even when the operator isn't focused on
+	// the row.
+	LinkedRow = lipgloss.NewStyle().
+			Foreground(Strong)
 
 	FooterMode = lipgloss.NewStyle().
 			Foreground(Strong).

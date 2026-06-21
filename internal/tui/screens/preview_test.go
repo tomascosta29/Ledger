@@ -33,6 +33,13 @@ func TestPreviewManager(t *testing.T) {
 		{id: 43, date: "2026-06-18", amount: "2500.00 EUR", cat: "income", desc: "gehalt"},
 		{id: 42, date: "2026-06-18", amount: "0.00 EUR", cat: "", desc: "null tx"},
 	}
+	// Pretend rows 47 and 46 are already linked (a transfer pair)
+	// so the preview shows the ⇄ glyph in action.
+	groupID := int64(99)
+	m.rows[0].linked = true
+	m.rows[0].groupID = &groupID
+	m.rows[1].linked = true
+	m.rows[1].groupID = &groupID
 	m.cursor = 1
 	m.selected = map[int64]bool{45: true, 44: true}
 

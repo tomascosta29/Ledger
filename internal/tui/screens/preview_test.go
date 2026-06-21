@@ -38,7 +38,6 @@ func TestPreviewManager(t *testing.T) {
 
 	entries := []chrome.SidebarEntry{
 		{Name: "Manager", Active: true},
-		{Name: "Categorizer"},
 		{Name: "Linker"},
 		{Name: "Budget"},
 		{Name: "Recipes"},
@@ -71,13 +70,30 @@ func TestPreviewManager(t *testing.T) {
 			body = m.View(contentW, contentH)
 			hints = m.Hints(width)
 			m.filterMode = false
-		case modeBulkCat:
-			m.bulkMode = true
-			m.bulkAction = bulkCategorize
-			m.bulkInput = "rent"
+		case modeInputCat:
+			m.inputMode = inputCategory
+			m.inputScope = scopeCursor
+			m.input = "food"
 			body = m.View(contentW, contentH)
 			hints = m.Hints(width)
-			m.bulkMode = false
+			m.inputMode = inputNone
+			m.input = ""
+		case modeInputBucket:
+			m.inputMode = inputBucket
+			m.inputScope = scopeCursor
+			m.input = "rent"
+			body = m.View(contentW, contentH)
+			hints = m.Hints(width)
+			m.inputMode = inputNone
+			m.input = ""
+		case modeInputTagSel:
+			m.inputMode = inputTag
+			m.inputScope = scopeSelection
+			m.input = "recurring"
+			body = m.View(contentW, contentH)
+			hints = m.Hints(width)
+			m.inputMode = inputNone
+			m.input = ""
 		}
 		out := chrome.Layout(entries, "Manager", body, hints, status, width, height)
 		_, _ = io.WriteString(w, "===== "+label+" =====\n")
@@ -93,24 +109,10 @@ func TestPreviewManager(t *testing.T) {
 
 	renderTo(f, "width=100, mode=Normal, 2 selected", 100, 24, modeNormal)
 	renderTo(f, "width=100, mode=Filter", 100, 24, modeFilter)
-	renderTo(f, "width=100, mode=Bulk: categorize", 100, 24, modeBulkCat)
+	renderTo(f, "width=100, mode=Input: category", 100, 24, modeInputCat)
+	renderTo(f, "width=100, mode=Input: bucket", 100, 24, modeInputBucket)
+	renderTo(f, "width=100, mode=Input: tag (on 2 selected)", 100, 24, modeInputTagSel)
 	renderTo(f, "width=60, mode=Normal (no sidebar)", 60, 24, modeNormal)
-
-	// ---- Categorizer ----
-	cat := NewCategorizer()
-	cat.rows = []catRow{
-		{id: 47, date: "2026-06-20", amount: "-42.00 EUR", desc: "rewe"},
-		{id: 46, date: "2026-06-20", amount: "-12.50 EUR", desc: "s-bahn"},
-		{id: 45, date: "2026-06-19", amount: "-88.00 EUR", desc: "lidl"},
-		{id: 44, date: "2026-06-19", amount: "-200.00 EUR", desc: "miete juni"},
-	}
-	cat.cursor = 2
-	renderScreenTo(f, "===== Categorizer, width=100, 4 unknown tx =====", 100, 24, cat, true)
-	renderScreenTo(f, "===== Categorizer, width=60 (no sidebar) =====", 60, 24, cat, true)
-	cat.inputMode = inputCategory
-	cat.input = "groceries"
-	renderScreenTo(f, "===== Categorizer, mode=Input (category) =====", 100, 24, cat, true)
-	cat.inputMode = inputNone
 
 	// ---- Linker ----
 	lnk := NewLinker()
@@ -161,11 +163,10 @@ func TestPreviewManager(t *testing.T) {
 }
 
 // renderScreenTo renders a Screen through chrome.Layout. used for
-// Categorizer and Linker in the preview.
+// Linker, Budget, Recipes in the preview.
 func renderScreenTo(w io.Writer, label string, width, height int, s Screen, active bool) {
 	entries := []chrome.SidebarEntry{
 		{Name: "Manager"},
-		{Name: "Categorizer"},
 		{Name: "Linker"},
 		{Name: "Budget"},
 		{Name: "Recipes"},
@@ -206,5 +207,7 @@ type mgrMode int
 const (
 	modeNormal mgrMode = iota
 	modeFilter
-	modeBulkCat
+	modeInputCat
+	modeInputBucket
+	modeInputTagSel
 )

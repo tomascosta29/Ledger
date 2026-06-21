@@ -14,7 +14,7 @@ func (h Help) View(width, height int) string {
 	content := `LedgerPro TUI — keybindings
 
 Global
-  1 .. 5       jump to screen (Manager, Categorizer, Linker, Budget, Recipes)
+  1 .. 4       jump to screen (Manager, Linker, Budget, Recipes)
   ?            this help
   q            quit
   ctrl+c       quit
@@ -22,16 +22,19 @@ Global
 Manager
   j / k        next / previous row
   g / G        first / last row
-  /            enter filter
+  pgup / pgdn  jump 10 rows
+  /            enter filter DSL
+  n            jump to next Unknown row
   x            toggle select
-  :            command line
+  c / b / t    set category / bucket / tag on cursor row
+  C / B / T    same, on selection
+  l            link selected rows as transfers
+  H            hide selection
+  U            undo last batch
 
-Categorizer
-  j / k        next / previous unknown transaction
-  c            set category
-  b            set bucket
-  t            add tag
-  Enter        apply
+Linker
+  j / k        next / previous item
+  Enter        link focused candidate
 
 Budget
   Tab          switch focus (buckets ↔ unassigned)

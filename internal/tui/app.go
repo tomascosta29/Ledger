@@ -36,11 +36,13 @@ type App struct {
 	help components.Help
 }
 
-// NewApp wires the root model and registers the five screens.
+// NewApp wires the root model and registers the four screens.
+// Categorizer was retired in v1.3 — Manager absorbs its single-row
+// annotation keys (c/b/t) plus a `n` jump-to-next-Unknown for the
+// triage loop.
 func NewApp(ctx context.Context, deps screens.Deps) *App {
 	list := []screens.Screen{
 		screens.NewManager(),
-		screens.NewCategorizer(),
 		screens.NewLinker(),
 		screens.NewBudget(),
 		screens.NewRecipes(),

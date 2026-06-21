@@ -9,11 +9,15 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/tomascosta29/Ledger/internal/application/ports"
+	"github.com/tomascosta29/Ledger/internal/application/services"
 	"github.com/tomascosta29/Ledger/internal/tui/hints"
 	"github.com/tomascosta29/Ledger/internal/tui/styles"
 )
 
 // Manager is the transaction list screen (filter DSL, j/k nav, ...).
+// Single screen after v1.3 — absorbs Categorizer's single-row
+// annotation (c/b/t) plus bulk on selection (C/B/T) and a quick
+// jump-to-next-Unknown (n) for the triage loop.
 type Manager struct {
 	deps   Deps
 	rows   []managerRow
@@ -21,11 +25,17 @@ type Manager struct {
 	filter Filter
 	filterInput string
 	filterMode  bool
-	bulkMode    bool
-	bulkInput   string
-	bulkAction  bulkActionKind
-	selected    map[int64]bool
-	statusMsg   string
+
+	// Unified annotation input state. inputMode != inputNone means
+	// the operator is typing a category / bucket / tag value;
+	// inputScope tells us whether Enter applies to the cursor row
+	// or to the multi-selection. Replaces the older bulkMode pair.
+	inputMode  inputKind
+	inputScope inputScope
+	input      string
+
+	selected  map[int64]bool
+	statusMsg string
 }
 
 type managerRow struct {
@@ -37,13 +47,32 @@ type managerRow struct {
 	rawID  *int64
 }
 
-type bulkActionKind int
+type inputKind int
 
 const (
-	bulkNone bulkActionKind = iota
-	bulkCategorize
-	bulkTag
-	bulkHide
+	inputNone inputKind = iota
+	inputCategory
+	inputBucket
+	inputTag
+)
+
+func (k inputKind) label() string {
+	switch k {
+	case inputCategory:
+		return "category"
+	case inputBucket:
+		return "bucket"
+	case inputTag:
+		return "tag"
+	}
+	return ""
+}
+
+type inputScope int
+
+const (
+	scopeCursor inputScope = iota
+	scopeSelection
 )
 
 func NewManager() *Manager {
@@ -96,13 +125,12 @@ func (m *Manager) opts() ports.OverlayFindOptions {
 }
 
 func (m *Manager) Update(msg tea.Msg) (Screen, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	if msg, ok := msg.(tea.KeyMsg); ok {
 		if m.filterMode {
 			return m.updateFilterInput(msg)
 		}
-		if m.bulkMode {
-			return m.updateBulkInput(msg)
+		if m.inputMode != inputNone {
+			return m.updateInput(msg)
 		}
 		return m.updateNormal(msg)
 	}
@@ -128,6 +156,8 @@ func (m *Manager) updateNormal(msg tea.KeyMsg) (Screen, tea.Cmd) {
 		m.cursor = min(m.cursor+10, len(m.rows)-1)
 	case "pgup":
 		m.cursor = max(m.cursor-10, 0)
+	case "n":
+		m.jumpToNextUnknown()
 	case "/":
 		m.filterMode = true
 		m.filterInput = ""
@@ -145,18 +175,58 @@ func (m *Manager) updateNormal(msg tea.KeyMsg) (Screen, tea.Cmd) {
 	case "X":
 		m.selected = make(map[int64]bool)
 		m.statusMsg = "selection cleared"
+	case "c":
+		if m.cursor < len(m.rows) {
+			m.inputMode = inputCategory
+			m.inputScope = scopeCursor
+			m.input = ""
+			m.statusMsg = "category on cursor →"
+		}
+	case "b":
+		if m.cursor < len(m.rows) {
+			m.inputMode = inputBucket
+			m.inputScope = scopeCursor
+			m.input = ""
+			m.statusMsg = "bucket on cursor →"
+		}
+	case "t":
+		if m.cursor < len(m.rows) {
+			m.inputMode = inputTag
+			m.inputScope = scopeCursor
+			m.input = ""
+			m.statusMsg = "tag on cursor →"
+		}
 	case "C":
-		m.bulkMode = true
-		m.bulkAction = bulkCategorize
-		m.bulkInput = ""
-		m.statusMsg = "categorize selection →"
+		if len(m.selected) == 0 {
+			m.statusMsg = "no selection (press x on rows)"
+			return m, nil
+		}
+		m.inputMode = inputCategory
+		m.inputScope = scopeSelection
+		m.input = ""
+		m.statusMsg = fmt.Sprintf("category on %d →", len(m.selected))
+	case "B":
+		if len(m.selected) == 0 {
+			m.statusMsg = "no selection (press x on rows)"
+			return m, nil
+		}
+		m.inputMode = inputBucket
+		m.inputScope = scopeSelection
+		m.input = ""
+		m.statusMsg = fmt.Sprintf("bucket on %d →", len(m.selected))
 	case "T":
-		m.bulkMode = true
-		m.bulkAction = bulkTag
-		m.bulkInput = ""
-		m.statusMsg = "tag selection +"
+		if len(m.selected) == 0 {
+			m.statusMsg = "no selection (press x on rows)"
+			return m, nil
+		}
+		m.inputMode = inputTag
+		m.inputScope = scopeSelection
+		m.input = ""
+		m.statusMsg = fmt.Sprintf("tag on %d +", len(m.selected))
 	case "H":
 		m.applyBulkHide(ctx)
+	case "l":
+		return m.linkSelected(ctx)
 	case "U":
 		m.applyBulkUndo(ctx)
 	case "esc":
@@ -167,47 +237,97 @@ func (m *Manager) updateNormal(msg tea.KeyMsg) (Screen, tea.Cmd) {
 	return m, nil
 }
 
-func (m *Manager) updateBulkInput(msg tea.KeyMsg) (Screen, tea.Cmd) {
-	ctx := context.Background()
+// updateInput handles keystrokes while an annotation prompt is open.
+// Esc cancels, Enter applies, runes and backspace edit the buffer.
+func (m *Manager) updateInput(msg tea.KeyMsg) (Screen, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyEsc:
-		m.bulkMode = false
-		m.bulkInput = ""
-		m.bulkAction = bulkNone
+		m.inputMode = inputNone
+		m.input = ""
 		m.statusMsg = "cancelled"
 	case tea.KeyEnter:
-		action := m.bulkAction
-		value := m.bulkInput
-		m.bulkMode = false
-		m.bulkInput = ""
-		m.bulkAction = bulkNone
-		switch action {
-		case bulkCategorize:
-			if value == "" {
-				m.statusMsg = "empty category"
-				return m, nil
-			}
-			if err := m.applyBulkCategorize(ctx, value); err != nil {
-				m.statusMsg = "cat: " + err.Error()
-			}
-		case bulkTag:
-			if value == "" {
-				m.statusMsg = "empty tag"
-				return m, nil
-			}
-			if err := m.applyBulkTag(ctx, value); err != nil {
-				m.statusMsg = "tag: " + err.Error()
-			}
-		}
+		mode := m.inputMode
+		scope := m.inputScope
+		value := m.input
+		m.inputMode = inputNone
+		m.input = ""
+		return m.applyInput(context.Background(), mode, scope, value)
 	case tea.KeyBackspace:
-		if len(m.bulkInput) > 0 {
-			m.bulkInput = m.bulkInput[:len(m.bulkInput)-1]
+		if len(m.input) > 0 {
+			m.input = m.input[:len(m.input)-1]
 		}
 	default:
 		if len(msg.Runes) > 0 {
-			m.bulkInput += string(msg.Runes)
+			m.input += string(msg.Runes)
 		}
 	}
+	return m, nil
+}
+
+// jumpToNextUnknown moves the cursor to the next row with empty
+// category (Category == "" means the overlay reports NULL as "").
+// Wraps around once; reports if no Unknown rows remain.
+func (m *Manager) jumpToNextUnknown() {
+	for i := m.cursor + 1; i < len(m.rows); i++ {
+		if m.rows[i].cat == "" {
+			m.cursor = i
+			return
+		}
+	}
+	for i := 0; i <= m.cursor; i++ {
+		if m.rows[i].cat == "" {
+			m.cursor = i
+			return
+		}
+	}
+	m.statusMsg = "no Unknown rows"
+}
+
+// applyInput dispatches the typed value to the right service call
+// based on (kind, scope). Bulk methods reuse the same code path
+// because AnnotationService methods accept a slice of IDs.
+func (m *Manager) applyInput(ctx context.Context, mode inputKind, scope inputScope, value string) (Screen, tea.Cmd) {
+	if value == "" {
+		m.statusMsg = "empty " + mode.label()
+		return m, nil
+	}
+	var ids []int64
+	switch scope {
+	case scopeCursor:
+		if m.cursor >= len(m.rows) {
+			m.statusMsg = "no row"
+			return m, nil
+		}
+		ids = []int64{m.rows[m.cursor].id}
+	case scopeSelection:
+		ids = m.selectedIDs()
+		if len(ids) == 0 {
+			m.statusMsg = "no selection"
+			return m, nil
+		}
+	}
+	svc := annSvcFromDeps(m.deps)
+	var err error
+	switch mode {
+	case inputCategory:
+		err = svc.BulkCategorize(ctx, ids, value, nil)
+	case inputBucket:
+		err = svc.BulkSetBucket(ctx, ids, value)
+	case inputTag:
+		err = svc.BulkAddTags(ctx, ids, []string{value})
+	}
+	if err != nil {
+		m.statusMsg = mode.label() + ": " + err.Error()
+		return m, nil
+	}
+	switch scope {
+	case scopeCursor:
+		m.statusMsg = fmt.Sprintf("%s %d → %s", mode.label(), ids[0], value)
+	case scopeSelection:
+		m.statusMsg = fmt.Sprintf("%s %d → %s", mode.label(), len(ids), value)
+		m.selected = make(map[int64]bool)
+	}
+	m.reload(ctx)
 	return m, nil
 }
 
@@ -267,6 +387,46 @@ func (m *Manager) applyBulkHide(ctx context.Context) {
 	m.reload(ctx)
 }
 
+// linkSelected runs transfer detection on the selected rows and
+// confirms any pair where both the out-tx and in-tx are in the
+// selection. Returns the Screen for the bubbletea return contract;
+// statusMsg carries the result.
+func (m *Manager) linkSelected(ctx context.Context) (Screen, tea.Cmd) {
+	if len(m.selected) < 2 {
+		m.statusMsg = "link: select 2+ rows with x first"
+		return m, nil
+	}
+	svc := services.NewTransferService(services.TransferDetectionDeps{
+		TxRepo:    m.deps.TxRepo,
+		GroupRepo: m.deps.GroupRepo,
+		AuditRepo: m.deps.AuditRepo,
+		OverlaySvc: m.deps.OverlaySvc,
+	})
+	cands, err := svc.Detect(ctx)
+	if err != nil {
+		m.statusMsg = "link detect: " + err.Error()
+		return m, nil
+	}
+	linked := 0
+	for _, c := range cands {
+		if !m.selected[c.OutID] || !m.selected[c.InID] {
+			continue
+		}
+		if _, err := svc.Confirm(ctx, services.TransferCandidate{
+			OutID: c.OutID,
+			InID:  c.InID,
+		}); err != nil {
+			m.statusMsg = fmt.Sprintf("link %d↔%d: %s", c.OutID, c.InID, err.Error())
+			continue
+		}
+		linked++
+	}
+	m.selected = make(map[int64]bool)
+	m.statusMsg = fmt.Sprintf("linked %d pair(s)", linked)
+	m.reload(ctx)
+	return m, nil
+}
+
 func (m *Manager) applyBulkUndo(ctx context.Context) {
 	svc := annSvcFromDeps(m.deps)
 	if err := svc.Undo(ctx); err != nil {
@@ -310,15 +470,12 @@ func (m *Manager) View(width, height int) string {
 	if m.filterMode {
 		return fmt.Sprintf("  filter: %s_\n", m.filterInput)
 	}
-	if m.bulkMode {
-		label := "?"
-		switch m.bulkAction {
-		case bulkCategorize:
-			label = "categorize"
-		case bulkTag:
-			label = "tag"
+	if m.inputMode != inputNone {
+		scope := "cursor"
+		if m.inputScope == scopeSelection {
+			scope = fmt.Sprintf("%d selected", len(m.selected))
 		}
-		return fmt.Sprintf("  %s on selection: %s_\n", label, m.bulkInput)
+		return fmt.Sprintf("  %s on %s: %s_\n", m.inputMode.label(), scope, m.input)
 	}
 	if len(m.rows) == 0 {
 		return "  (no transactions — try `ledger import` or `ledger add`)\n"
@@ -497,9 +654,11 @@ func truncateToWidth(s string, n int) string {
 }
 
 func (m *Manager) Hints(width int) hints.FooterHints {
-	// Mode-aware footer. Selected-count replaces the global key
-	// hints when something is selected; filter and bulk modes
-	// surface their own short hint set.
+	// Mode-aware footer. Filter and annotation prompts surface
+	// their own short hint set. With nothing selected, hints lead
+	// with the single-row keys (c/b/t + n) which are the primary
+	// triage loop; bulk keys (C/B/T) come later and truncate first
+	// at narrow widths.
 	if m.filterMode {
 		return hints.FooterHints{
 			Mode: "Filter",
@@ -510,21 +669,20 @@ func (m *Manager) Hints(width int) hints.FooterHints {
 			},
 		}
 	}
-	if m.bulkMode {
-		label := "apply"
-		switch m.bulkAction {
-		case bulkCategorize:
-			label = "Bulk: categorize"
-		case bulkTag:
-			label = "Bulk: tag"
-		case bulkHide:
-			label = "Bulk: hide"
+	if m.inputMode != inputNone {
+		label := m.inputMode.label()
+		switch m.inputScope {
+		case scopeCursor:
+			label = "Input: " + label
+		case scopeSelection:
+			label = "Bulk: " + label
 		}
 		return hints.FooterHints{
 			Mode: label,
 			Keys: []hints.KeyHint{
 				{Key: "Enter", Label: "apply"},
 				{Key: "Esc", Label: "cancel"},
+				{Key: "Bksp", Label: "edit"},
 			},
 		}
 	}
@@ -535,10 +693,12 @@ func (m *Manager) Hints(width int) hints.FooterHints {
 			Keys: []hints.KeyHint{
 				{Key: "[x]", Label: "toggle"},
 				{Key: "C", Label: "cat", Count: n},
+				{Key: "B", Label: "bkt", Count: n},
 				{Key: "T", Label: "tag", Count: n},
+				{Key: "l", Label: "link", Count: n},
 				{Key: "H", Label: "hide", Count: n},
 				{Key: "U", Label: "undo"},
-				{Key: ":", Label: "clear"},
+				{Key: "X", Label: "clear"},
 			},
 		}
 	}
@@ -546,10 +706,15 @@ func (m *Manager) Hints(width int) hints.FooterHints {
 		Mode: "Normal",
 		Keys: []hints.KeyHint{
 			{Key: "j/k", Label: "nav"},
+			{Key: "n", Label: "unk"},
+			{Key: "c", Label: "cat"},
+			{Key: "t", Label: "tag"},
+			{Key: "b", Label: "bkt"},
+			{Key: "l", Label: "link"},
 			{Key: "/", Label: "filter"},
 			{Key: "x", Label: "select"},
-			{Key: "C", Label: "cat"},
-			{Key: "T", Label: "tag"},
+			{Key: "C", Label: "cat·N"},
+			{Key: "T", Label: "tag·N"},
 			{Key: "H", Label: "hide"},
 			{Key: "U", Label: "undo"},
 			{Key: "?", Label: "help"},

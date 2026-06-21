@@ -18,6 +18,7 @@ const (
 	AuditActionEdit              = "edit"
 	AuditActionVisibility        = "visibility"
 	AuditActionCategorize        = "categorize"
+	AuditActionCategoryCreate    = "category_create"
 	AuditActionTag               = "tag"
 	AuditActionBucket            = "bucket_assign"
 	AuditActionSplit             = "split"

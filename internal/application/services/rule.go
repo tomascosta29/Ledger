@@ -11,12 +11,13 @@ import (
 )
 
 type RuleDeps struct {
-	TxRepo     ports.TransactionRepository
-	TagRepo    ports.TagRepository
-	BucketRepo ports.BucketRepository
-	RuleRepo   ports.RuleRepository
-	AnnService *AnnotationService
-	Now        func() time.Time
+	TxRepo      ports.TransactionRepository
+	TagRepo     ports.TagRepository
+	BucketRepo  ports.BucketRepository
+	CategoryRepo ports.CategoryRepository
+	RuleRepo    ports.RuleRepository
+	AnnService  *AnnotationService
+	Now         func() time.Time
 }
 
 type RuleService struct {
@@ -100,11 +101,15 @@ func (s *RuleService) matches(tx *entities.Transaction, rule *entities.Rule) boo
 
 func (s *RuleService) applyOne(ctx context.Context, tx *entities.Transaction, rule *entities.Rule) (bool, error) {
 	did := false
-	if rule.SetCategory != nil && tx.Category == "Unknown" {
+	if rule.SetCategory != nil && tx.CategoryID == nil {
 		if err := s.deps.AnnService.Categorize(ctx, tx.ID, *rule.SetCategory, nil); err != nil {
 			return false, err
 		}
-		tx.Category = *rule.SetCategory
+		// Re-read the FK the service resolved, so the in-memory tx is in
+		// sync for downstream checks (e.g. bucket on same rule pass).
+		if c, err := s.deps.CategoryRepo.GetByName(ctx, *rule.SetCategory); err == nil {
+			tx.CategoryID = &c.ID
+		}
 		did = true
 	}
 	if rule.SetBucketID != nil && tx.BucketID == nil {
@@ -112,7 +117,13 @@ func (s *RuleService) applyOne(ctx context.Context, tx *entities.Transaction, ru
 		if bucketName == "" {
 			return did, nil
 		}
-		if err := s.deps.AnnService.Categorize(ctx, tx.ID, tx.Category, &bucketName); err != nil {
+		var currentCategory string
+		if tx.CategoryID != nil {
+			if c, err := s.deps.CategoryRepo.GetByID(ctx, *tx.CategoryID); err == nil {
+				currentCategory = c.Name
+			}
+		}
+		if err := s.deps.AnnService.Categorize(ctx, tx.ID, currentCategory, &bucketName); err != nil {
 			return false, err
 		}
 		did = true

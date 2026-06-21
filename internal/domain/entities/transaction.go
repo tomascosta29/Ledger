@@ -18,7 +18,7 @@ type Transaction struct {
 	SourceHash         string
 	RawData            []byte
 	RawDescription     *string
-	Category           string
+	CategoryID         *int64
 	BucketID           *int64
 	ExcludeFromReports bool
 	IsHidden           bool

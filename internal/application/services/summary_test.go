@@ -23,6 +23,19 @@ func newSummaryTestEnv(t *testing.T) (*services.SummaryService, *persistence.DB,
 	if err := persistence.Migrate(db.DB); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
+	// Seed categories referenced by the test transactions.
+	if _, err := db.Exec(`INSERT INTO categories (name) VALUES ('need'), ('want'), ('savings')`); err != nil {
+		t.Fatalf("seed categories: %v", err)
+	}
+	categoryRepo := persistence.NewCategoryRepository(db)
+	catID := map[string]int64{}
+	for _, name := range []string{"need", "want", "savings"} {
+		c, err := categoryRepo.GetByName(context.Background(), name)
+		if err != nil {
+			t.Fatalf("lookup seeded %q: %v", name, err)
+		}
+		catID[name] = c.ID
+	}
 	// Seed transactions across two months.
 	txRepo := persistence.NewTransactionRepository(db)
 	for i, e := range []struct {
@@ -35,12 +48,13 @@ func newSummaryTestEnv(t *testing.T) (*services.SummaryService, *persistence.DB,
 		{"2026-06-20", 2500, "savings"},
 		{"2026-07-01", -2000, "need"},
 	} {
+		cid := catID[e.cat]
 		id, err := txRepo.Insert(context.Background(), &entities.Transaction{
 			EffectiveDate: e.date,
 			Amount:        valueobjects.MustNew(e.amount, valueobjects.EUR),
 			Description:   "tx",
 			SourceHash:    "h" + itoa(i),
-			Category:      e.cat,
+			CategoryID:    &cid,
 			CreatedAt:     time.Now().UTC(),
 			UpdatedAt:     time.Now().UTC(),
 		})

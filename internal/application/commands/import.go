@@ -147,7 +147,6 @@ func (u *ImportUseCase) Execute(ctx context.Context, opts ImportOptions) (*Impor
 			ImportBatchID:  &batchID,
 			SourceHash:     hash,
 			RawDescription: nullableStr(r.RawDescription),
-			Category:       "Unknown",
 			CreatedAt:      now,
 			UpdatedAt:      now,
 		}

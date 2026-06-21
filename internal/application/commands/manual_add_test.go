@@ -28,11 +28,16 @@ func TestManualAddCreatesAndIsIdempotent(t *testing.T) {
 	db := newCmdTestDB(t)
 	defer db.Close()
 
+	if _, err := db.Exec(`INSERT INTO categories (name) VALUES ('want')`); err != nil {
+		t.Fatalf("seed want: %v", err)
+	}
+
 	uc := commands.NewManualAddUseCase(commands.ManualAddDeps{
-		TxRepo:     persistence.NewTransactionRepository(db),
-		AuditRepo:  persistence.NewAuditLogRepository(db),
-		OverlaySvc: services.NewOverlayService(db.DB),
-		Now:        func() time.Time { return time.Date(2026, 6, 20, 12, 0, 0, 0, time.UTC) },
+		TxRepo:       persistence.NewTransactionRepository(db),
+		AuditRepo:    persistence.NewAuditLogRepository(db),
+		CategoryRepo: persistence.NewCategoryRepository(db),
+		OverlaySvc:   services.NewOverlayService(db.DB),
+		Now:          func() time.Time { return time.Date(2026, 6, 20, 12, 0, 0, 0, time.UTC) },
 	})
 
 	opts := commands.ManualAddOptions{
@@ -84,9 +89,10 @@ func TestManualAddRequiresFields(t *testing.T) {
 	defer db.Close()
 
 	uc := commands.NewManualAddUseCase(commands.ManualAddDeps{
-		TxRepo:     persistence.NewTransactionRepository(db),
-		AuditRepo:  persistence.NewAuditLogRepository(db),
-		OverlaySvc: services.NewOverlayService(db.DB),
+		TxRepo:       persistence.NewTransactionRepository(db),
+		AuditRepo:    persistence.NewAuditLogRepository(db),
+		CategoryRepo: persistence.NewCategoryRepository(db),
+		OverlaySvc:   services.NewOverlayService(db.DB),
 	})
 	cases := []struct {
 		name string

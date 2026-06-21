@@ -20,7 +20,6 @@ func seedTx(t *testing.T, db *persistence.DB, amount int64) int64 {
 		Amount:        valueobjects.MustNew(amount, valueobjects.EUR),
 		Description:   "seed",
 		SourceHash:    "seed-hash",
-		Category:      "Unknown",
 		CreatedAt:     time.Now().UTC(),
 		UpdatedAt:     time.Now().UTC(),
 	})

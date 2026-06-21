@@ -59,6 +59,7 @@ func init() {
 	rootCmd.AddCommand(tagCmd)
 	rootCmd.AddCommand(undoCmd)
 	rootCmd.AddCommand(bucketCmd)
+	rootCmd.AddCommand(categoryCmd)
 	rootCmd.AddCommand(budgetCmd)
 	rootCmd.AddCommand(recipeCmd)
 	rootCmd.AddCommand(summaryCmd)
@@ -161,6 +162,7 @@ func runShow(cmd *cobra.Command, args []string) error {
 	txRepo := persistence.NewTransactionRepository(db)
 	tagRepo := persistence.NewTagRepository(db)
 	bucketRepo := persistence.NewBucketRepository(db)
+	categoryRepo := persistence.NewCategoryRepository(db)
 
 	txn, err := txRepo.GetByID(ctx, ids[0])
 	if err != nil {
@@ -180,7 +182,11 @@ func runShow(cmd *cobra.Command, args []string) error {
 	if txn.PartnerIBAN != nil {
 		fmt.Printf("  IBAN:        %s\n", *txn.PartnerIBAN)
 	}
-	fmt.Printf("  Category:    %s\n", txn.Category)
+	if txn.CategoryID == nil {
+		fmt.Printf("  Category:    (uncategorized)\n")
+	} else if c, err := categoryRepo.GetByID(ctx, *txn.CategoryID); err == nil {
+		fmt.Printf("  Category:    %s\n", c.Name)
+	}
 	if txn.BucketID != nil {
 		bucket, err := bucketRepo.GetByID(ctx, *txn.BucketID)
 		if err == nil {
@@ -871,18 +877,20 @@ func runRuleApply(cmd *cobra.Command, args []string) error {
 	defer db.Close()
 
 	annSvc := services.NewAnnotationService(services.AnnotationDeps{
-		DB:         db.DB,
-		TxRepo:     persistence.NewTransactionRepository(db),
-		TagRepo:    persistence.NewTagRepository(db),
-		BucketRepo: persistence.NewBucketRepository(db),
-		AuditRepo:  persistence.NewAuditLogRepository(db),
-		BatchRepo:  persistence.NewImportBatchRepository(db),
-		OverlaySvc: services.NewOverlayService(db.DB),
+		DB:          db.DB,
+		TxRepo:      persistence.NewTransactionRepository(db),
+		TagRepo:     persistence.NewTagRepository(db),
+		BucketRepo:  persistence.NewBucketRepository(db),
+		CategoryRepo: persistence.NewCategoryRepository(db),
+		AuditRepo:   persistence.NewAuditLogRepository(db),
+		BatchRepo:   persistence.NewImportBatchRepository(db),
+		OverlaySvc:  services.NewOverlayService(db.DB),
 	})
 	ruleSvc := services.NewRuleService(services.RuleDeps{
-		TxRepo:     persistence.NewTransactionRepository(db),
-		TagRepo:    persistence.NewTagRepository(db),
-		BucketRepo: persistence.NewBucketRepository(db),
+		TxRepo:      persistence.NewTransactionRepository(db),
+		TagRepo:     persistence.NewTagRepository(db),
+		BucketRepo:  persistence.NewBucketRepository(db),
+		CategoryRepo: persistence.NewCategoryRepository(db),
 		RuleRepo:   persistence.NewRuleRepository(db),
 		AnnService: annSvc,
 	})
@@ -1406,13 +1414,14 @@ func runAnnotation(ctx context.Context, fn func(*services.AnnotationService) err
 	defer db.Close()
 
 	svc := services.NewAnnotationService(services.AnnotationDeps{
-		DB:         db.DB,
-		TxRepo:     persistence.NewTransactionRepository(db),
-		TagRepo:    persistence.NewTagRepository(db),
-		BucketRepo: persistence.NewBucketRepository(db),
-		AuditRepo:  persistence.NewAuditLogRepository(db),
-		BatchRepo:  persistence.NewImportBatchRepository(db),
-		OverlaySvc: services.NewOverlayService(db.DB),
+		DB:          db.DB,
+		TxRepo:      persistence.NewTransactionRepository(db),
+		TagRepo:     persistence.NewTagRepository(db),
+		BucketRepo:  persistence.NewBucketRepository(db),
+		CategoryRepo: persistence.NewCategoryRepository(db),
+		AuditRepo:   persistence.NewAuditLogRepository(db),
+		BatchRepo:   persistence.NewImportBatchRepository(db),
+		OverlaySvc:  services.NewOverlayService(db.DB),
 	})
 	if err := fn(svc); err != nil {
 		return err
@@ -1459,6 +1468,54 @@ var bucketListCmd = &cobra.Command{
 	Short: "List buckets",
 	Args:  cobra.NoArgs,
 	RunE:  runBucketList,
+}
+
+var categoryCmd = &cobra.Command{
+	Use:   "category",
+	Short: "Manage the curated category set",
+}
+
+var (
+	categoryListArchived bool
+)
+
+func init() {
+	categoryCmd.AddCommand(categoryListCmd)
+	categoryListCmd.Flags().BoolVar(&categoryListArchived, "all", false, "include archived categories")
+}
+
+var categoryListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List categories",
+	Args:  cobra.NoArgs,
+	RunE:  runCategoryList,
+}
+
+func runCategoryList(cmd *cobra.Command, args []string) error {
+	ctx := ctxFromCmd(cmd)
+	db, err := openDB(ctx)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	repo := persistence.NewCategoryRepository(db)
+	cats, err := repo.List(ctx, categoryListArchived)
+	if err != nil {
+		return err
+	}
+	if len(cats) == 0 {
+		fmt.Println("no categories")
+		return nil
+	}
+	fmt.Printf("%-6s  %-22s  %s\n", "ID", "NAME", "STATUS")
+	for _, c := range cats {
+		status := "active"
+		if c.ArchivedAt != nil {
+			status = fmt.Sprintf("archived %s", c.ArchivedAt.Format("2006-01-02"))
+		}
+		fmt.Printf("%-6d  %-22s  %s\n", c.ID, c.Name, status)
+	}
+	return nil
 }
 
 func runBucketList(cmd *cobra.Command, args []string) error {
@@ -1718,13 +1775,14 @@ func runUndo(cmd *cobra.Command, args []string) error {
 	defer db.Close()
 
 	svc := services.NewAnnotationService(services.AnnotationDeps{
-		DB:         db.DB,
-		TxRepo:     persistence.NewTransactionRepository(db),
-		TagRepo:    persistence.NewTagRepository(db),
-		BucketRepo: persistence.NewBucketRepository(db),
-		AuditRepo:  persistence.NewAuditLogRepository(db),
-		BatchRepo:  persistence.NewImportBatchRepository(db),
-		OverlaySvc: services.NewOverlayService(db.DB),
+		DB:          db.DB,
+		TxRepo:      persistence.NewTransactionRepository(db),
+		TagRepo:     persistence.NewTagRepository(db),
+		BucketRepo:  persistence.NewBucketRepository(db),
+		CategoryRepo: persistence.NewCategoryRepository(db),
+		AuditRepo:   persistence.NewAuditLogRepository(db),
+		BatchRepo:   persistence.NewImportBatchRepository(db),
+		OverlaySvc:  services.NewOverlayService(db.DB),
 	})
 
 	if err := svc.Undo(ctx); err != nil {

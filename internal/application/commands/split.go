@@ -103,7 +103,7 @@ func (u *SplitUseCase) Execute(ctx context.Context, opts SplitOptions) (*SplitRe
 			ParentTxnID:    &parent.ID,
 			ImportBatchID:  parent.ImportBatchID,
 			SourceHash:     hash,
-			Category:       parent.Category,
+			CategoryID:     parent.CategoryID,
 			CreatedAt:      now,
 			UpdatedAt:      now,
 		})

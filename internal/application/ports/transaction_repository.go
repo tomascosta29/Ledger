@@ -58,10 +58,10 @@ type TransactionRepository interface {
 	UpdateFields(ctx context.Context, id int64, fields map[string]any) error
 	SetHidden(ctx context.Context, id int64, hidden bool) error
 	SetExcludeFromReports(ctx context.Context, id int64, exclude bool) error
-	SetCategory(ctx context.Context, id int64, category string) error
+	SetCategory(ctx context.Context, id int64, categoryID *int64) error
 	Count(ctx context.Context, filters TxFilters) (int64, error)
 
-	SetCategoryDBTX(ctx context.Context, db DBTX, id int64, category string) error
+	SetCategoryDBTX(ctx context.Context, db DBTX, id int64, categoryID *int64) error
 	SetHiddenDBTX(ctx context.Context, db DBTX, id int64, hidden bool) error
 	SetBucketDBTX(ctx context.Context, db DBTX, id int64, bucketID *int64) error
 	GetByIDDBTX(ctx context.Context, db DBTX, id int64) (*entities.Transaction, error)

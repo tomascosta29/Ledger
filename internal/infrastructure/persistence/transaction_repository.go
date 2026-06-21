@@ -28,7 +28,7 @@ func (r *TransactionRepository) Insert(ctx context.Context, tx *entities.Transac
 		INSERT INTO transactions (
 			effective_date, amount_minor, currency, description,
 			partner_name, partner_iban, import_batch_id, parent_transaction_id, source_hash,
-			raw_data, raw_description, category,
+			raw_data, raw_description, category_id,
 			exclude_from_reports, is_hidden, created_at, updated_at
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
@@ -43,7 +43,7 @@ func (r *TransactionRepository) Insert(ctx context.Context, tx *entities.Transac
 		tx.SourceHash,
 		nullBytes(tx.RawData),
 		nullStr(tx.RawDescription),
-		tx.Category,
+		nullInt64(tx.CategoryID),
 		boolToInt(tx.ExcludeFromReports),
 		boolToInt(tx.IsHidden),
 		timeToISO(tx.CreatedAt),
@@ -74,7 +74,7 @@ func (r *TransactionRepository) InsertBatch(ctx context.Context, txs []*entities
 		INSERT INTO transactions (
 			effective_date, amount_minor, currency, description,
 			partner_name, partner_iban, import_batch_id, parent_transaction_id, source_hash,
-			raw_data, raw_description, category,
+			raw_data, raw_description, category_id,
 			exclude_from_reports, is_hidden, created_at, updated_at
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
@@ -97,7 +97,7 @@ func (r *TransactionRepository) InsertBatch(ctx context.Context, txs []*entities
 			t.SourceHash,
 			nullBytes(t.RawData),
 			nullStr(t.RawDescription),
-			t.Category,
+			nullInt64(t.CategoryID),
 			boolToInt(t.ExcludeFromReports),
 			boolToInt(t.IsHidden),
 			timeToISO(t.CreatedAt),
@@ -122,7 +122,7 @@ func (r *TransactionRepository) InsertBatch(ctx context.Context, txs []*entities
 const selectAllColumnsSQL = `SELECT
 	id, effective_date, amount_minor, currency, description,
 	partner_name, partner_iban, import_batch_id, parent_transaction_id, source_hash,
-	raw_data, raw_description, category, bucket_id,
+	raw_data, raw_description, category_id, bucket_id,
 	exclude_from_reports, is_hidden, created_at, updated_at
 FROM transactions`
 
@@ -139,7 +139,7 @@ var allowedUpdateColumns = map[string]bool{
 	"description":           true,
 	"partner_name":          true,
 	"partner_iban":          true,
-	"category":              true,
+	"category_id":           true,
 	"exclude_from_reports":  true,
 	"is_hidden":             true,
 	"parent_transaction_id": true,
@@ -163,7 +163,7 @@ func scanTransaction(s scanner) (*entities.Transaction, error) {
 		sourceHash     string
 		rawData        []byte
 		rawDescription sql.NullString
-		category       string
+		categoryID     sql.NullInt64
 		bucketID       sql.NullInt64
 		excludeFromRep int
 		isHidden       int
@@ -173,7 +173,7 @@ func scanTransaction(s scanner) (*entities.Transaction, error) {
 	err := s.Scan(
 		&id, &effDate, &amountMinor, &currencyStr, &description,
 		&partnerName, &partnerIBAN, &importBatchID, &parentTxnID, &sourceHash,
-		&rawData, &rawDescription, &category, &bucketID,
+		&rawData, &rawDescription, &categoryID, &bucketID,
 		&excludeFromRep, &isHidden, &createdAtStr, &updatedAtStr,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -199,7 +199,7 @@ func scanTransaction(s scanner) (*entities.Transaction, error) {
 		SourceHash:         sourceHash,
 		RawData:            rawData,
 		RawDescription:     nullStringToPtr(rawDescription),
-		Category:           category,
+		CategoryID:         nullInt64ToPtr(categoryID),
 		BucketID:           nullInt64ToPtr(bucketID),
 		ExcludeFromReports: excludeFromRep != 0,
 		IsHidden:           isHidden != 0,
@@ -329,15 +329,15 @@ func (r *TransactionRepository) SetExcludeFromReports(ctx context.Context, id in
 	return r.UpdateFields(ctx, id, map[string]any{"exclude_from_reports": exclude})
 }
 
-func (r *TransactionRepository) SetCategory(ctx context.Context, id int64, category string) error {
-	return r.UpdateFields(ctx, id, map[string]any{"category": category})
+func (r *TransactionRepository) SetCategory(ctx context.Context, id int64, categoryID *int64) error {
+	return r.UpdateFields(ctx, id, map[string]any{"category_id": categoryID})
 }
 
-func (r *TransactionRepository) SetCategoryDBTX(ctx context.Context, db ports.DBTX, id int64, category string) error {
+func (r *TransactionRepository) SetCategoryDBTX(ctx context.Context, db ports.DBTX, id int64, categoryID *int64) error {
 	now := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
 	res, err := db.ExecContext(ctx,
-		`UPDATE transactions SET category = ?, updated_at = ? WHERE id = ?`,
-		category, now, id,
+		`UPDATE transactions SET category_id = ?, updated_at = ? WHERE id = ?`,
+		nullInt64(categoryID), now, id,
 	)
 	if err != nil {
 		return fmt.Errorf("set category: %w", err)
@@ -436,13 +436,13 @@ func buildWhere(f ports.TxFilters) (string, []any) {
 		args = append(args, boolToInt(*f.ExcludeFromReports))
 	}
 	if f.Category != nil {
-		clauses = append(clauses, "category = ?")
+		clauses = append(clauses, "category_id = (SELECT id FROM categories WHERE name = ?)")
 		args = append(args, *f.Category)
 	}
 	if len(f.Categories) > 0 {
 		placeholders := strings.Repeat("?,", len(f.Categories))
 		placeholders = strings.TrimRight(placeholders, ",")
-		clauses = append(clauses, "category IN ("+placeholders+")")
+		clauses = append(clauses, "category_id IN (SELECT id FROM categories WHERE name IN ("+placeholders+"))")
 		for _, c := range f.Categories {
 			args = append(args, c)
 		}

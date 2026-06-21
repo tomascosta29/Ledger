@@ -13,10 +13,11 @@ import (
 )
 
 type ManualAddDeps struct {
-	TxRepo     ports.TransactionRepository
-	AuditRepo  ports.AuditLogRepository
-	OverlaySvc ports.OverlayService
-	Now        func() time.Time
+	TxRepo      ports.TransactionRepository
+	AuditRepo   ports.AuditLogRepository
+	CategoryRepo ports.CategoryRepository
+	OverlaySvc  ports.OverlayService
+	Now         func() time.Time
 }
 
 type ManualAddOptions struct {
@@ -63,9 +64,16 @@ func (u *ManualAddUseCase) Execute(ctx context.Context, opts ManualAddOptions) (
 		return nil, fmt.Errorf("amount: %w", err)
 	}
 
-	category := opts.Category
-	if category == "" {
-		category = "Unknown"
+	var categoryID *int64
+	if opts.Category != "" {
+		if u.deps.CategoryRepo == nil {
+			return nil, errors.New("category service not configured")
+		}
+		c, err := u.deps.CategoryRepo.GetByName(ctx, opts.Category)
+		if err != nil {
+			return nil, fmt.Errorf("lookup category %q: %w", opts.Category, err)
+		}
+		categoryID = &c.ID
 	}
 
 	hash := csvinfra.ComputeSourceHash(csvinfra.HashInput{
@@ -87,7 +95,7 @@ func (u *ManualAddUseCase) Execute(ctx context.Context, opts ManualAddOptions) (
 		PartnerIBAN:    nullableStr(opts.PartnerIBAN),
 		SourceHash:     hash,
 		RawDescription: nullableStr(opts.Description),
-		Category:       category,
+		CategoryID:     categoryID,
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}

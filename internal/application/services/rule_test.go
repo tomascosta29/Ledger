@@ -25,10 +25,16 @@ func TestRuleApplySetsCategoryBucketTag(t *testing.T) {
 	txRepo := persistence.NewTransactionRepository(db)
 	tagRepo := persistence.NewTagRepository(db)
 	bucketRepo := persistence.NewBucketRepository(db)
+	categoryRepo := persistence.NewCategoryRepository(db)
 	ruleRepo := persistence.NewRuleRepository(db)
 	auditRepo := persistence.NewAuditLogRepository(db)
 	batchRepo := persistence.NewImportBatchRepository(db)
 	overlaySvc := services.NewOverlayService(db.DB)
+
+	if _, err := db.Exec(`INSERT INTO categories (name) VALUES ('need')`); err != nil {
+		t.Fatalf("seed need: %v", err)
+	}
+	needCat, _ := categoryRepo.GetByName(ctx, "need")
 
 	bid, _ := bucketRepo.Create(ctx, &entities.Bucket{
 		Name: "groceries", Currency: "EUR", MonthlyAllocationMinor: 30000,
@@ -38,7 +44,6 @@ func TestRuleApplySetsCategoryBucketTag(t *testing.T) {
 		Amount:        valueobjects.MustNew(-4210, valueobjects.EUR),
 		Description:   "Grocery store",
 		SourceHash:    "h1",
-		Category:      "Unknown",
 		CreatedAt:     time.Now().UTC(),
 		UpdatedAt:     time.Now().UTC(),
 	})
@@ -60,10 +65,12 @@ func TestRuleApplySetsCategoryBucketTag(t *testing.T) {
 
 	annSvc := services.NewAnnotationService(services.AnnotationDeps{
 		DB: db.DB, TxRepo: txRepo, TagRepo: tagRepo, BucketRepo: bucketRepo,
+		CategoryRepo: categoryRepo,
 		AuditRepo: auditRepo, BatchRepo: batchRepo, OverlaySvc: overlaySvc,
 	})
 	ruleSvc := services.NewRuleService(services.RuleDeps{
 		TxRepo: txRepo, TagRepo: tagRepo, BucketRepo: bucketRepo,
+		CategoryRepo: categoryRepo,
 		RuleRepo: ruleRepo, AnnService: annSvc,
 	})
 	result, err := ruleSvc.Apply(ctx)
@@ -75,8 +82,8 @@ func TestRuleApplySetsCategoryBucketTag(t *testing.T) {
 	}
 
 	txn, _ := txRepo.GetByID(ctx, txID)
-	if txn.Category != "need" {
-		t.Errorf("category = %q", txn.Category)
+	if txn.CategoryID == nil || *txn.CategoryID != needCat.ID {
+		t.Errorf("category = %v, want id %d", txn.CategoryID, needCat.ID)
 	}
 	if txn.BucketID == nil || *txn.BucketID != bid {
 		t.Errorf("bucket = %v, want %d", txn.BucketID, bid)
@@ -101,17 +108,23 @@ func TestRuleApplyNoOverwrite(t *testing.T) {
 	txRepo := persistence.NewTransactionRepository(db)
 	tagRepo := persistence.NewTagRepository(db)
 	bucketRepo := persistence.NewBucketRepository(db)
+	categoryRepo := persistence.NewCategoryRepository(db)
 	ruleRepo := persistence.NewRuleRepository(db)
 	auditRepo := persistence.NewAuditLogRepository(db)
 	batchRepo := persistence.NewImportBatchRepository(db)
 	overlaySvc := services.NewOverlayService(db.DB)
+
+	if _, err := db.Exec(`INSERT INTO categories (name) VALUES ('want'), ('need')`); err != nil {
+		t.Fatalf("seed want+need: %v", err)
+	}
+	wantCat, _ := categoryRepo.GetByName(ctx, "want")
 
 	txID, _ := txRepo.Insert(ctx, &entities.Transaction{
 		EffectiveDate: "2026-06-20",
 		Amount:        valueobjects.MustNew(-1000, valueobjects.EUR),
 		Description:   "Coffee at corner",
 		SourceHash:    "h",
-		Category:      "want", // already set
+		CategoryID:    &wantCat.ID, // already set
 		CreatedAt:     time.Now().UTC(),
 		UpdatedAt:     time.Now().UTC(),
 	})
@@ -130,10 +143,12 @@ func TestRuleApplyNoOverwrite(t *testing.T) {
 
 	annSvc := services.NewAnnotationService(services.AnnotationDeps{
 		DB: db.DB, TxRepo: txRepo, TagRepo: tagRepo, BucketRepo: bucketRepo,
+		CategoryRepo: categoryRepo,
 		AuditRepo: auditRepo, BatchRepo: batchRepo, OverlaySvc: overlaySvc,
 	})
 	ruleSvc := services.NewRuleService(services.RuleDeps{
 		TxRepo: txRepo, TagRepo: tagRepo, BucketRepo: bucketRepo,
+		CategoryRepo: categoryRepo,
 		RuleRepo: ruleRepo, AnnService: annSvc,
 	})
 	result, err := ruleSvc.Apply(ctx)
@@ -144,8 +159,8 @@ func TestRuleApplyNoOverwrite(t *testing.T) {
 		t.Fatalf("expected 1 matched / 0 applied, got %+v", result)
 	}
 	txn, _ := txRepo.GetByID(ctx, txID)
-	if txn.Category != "want" {
-		t.Fatalf("category was overwritten: %q", txn.Category)
+	if txn.CategoryID == nil || *txn.CategoryID != wantCat.ID {
+		t.Fatalf("category was overwritten: %v", txn.CategoryID)
 	}
 }
 

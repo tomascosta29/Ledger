@@ -119,7 +119,9 @@ func (s *OverlayService) insertRawRows(ctx context.Context, tx *sql.Tx, refreshe
 			)
 			SELECT
 				t.effective_date, t.amount_minor, t.currency, t.description,
-				t.partner_name, t.partner_iban, t.category, t.bucket_id,
+				t.partner_name, t.partner_iban,
+				COALESCE((SELECT name FROM categories WHERE id = t.category_id), ''),
+				t.bucket_id,
 				COALESCE((SELECT GROUP_CONCAT(tt.tag, ',') FROM transaction_tags tt WHERE tt.transaction_id = t.id), ''),
 				'raw', t.id, t.exclude_from_reports, ?
 			FROM transactions t
@@ -137,7 +139,9 @@ func (s *OverlayService) insertRawRows(ctx context.Context, tx *sql.Tx, refreshe
 			)
 			SELECT
 				t.effective_date, t.amount_minor, t.currency, t.description,
-				t.partner_name, t.partner_iban, t.category, t.bucket_id,
+				t.partner_name, t.partner_iban,
+				COALESCE((SELECT name FROM categories WHERE id = t.category_id), ''),
+				t.bucket_id,
 				COALESCE((SELECT GROUP_CONCAT(tt.tag, ',') FROM transaction_tags tt WHERE tt.transaction_id = t.id), ''),
 				'raw', t.id, t.exclude_from_reports, ?
 			FROM transactions t
@@ -161,7 +165,9 @@ func (s *OverlayService) insertSplitChildren(ctx context.Context, tx *sql.Tx, re
 		)
 		SELECT
 			c.effective_date, c.amount_minor, c.currency, c.description,
-			c.partner_name, c.partner_iban, c.category, c.bucket_id,
+			c.partner_name, c.partner_iban,
+			COALESCE((SELECT name FROM categories WHERE id = c.category_id), ''),
+			c.bucket_id,
 			COALESCE((SELECT GROUP_CONCAT(tt.tag, ',') FROM transaction_tags tt WHERE tt.transaction_id = c.id), ''),
 			h.id, 'split_child', c.id, ?
 		FROM transactions c

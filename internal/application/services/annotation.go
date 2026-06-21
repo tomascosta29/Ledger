@@ -14,14 +14,15 @@ import (
 )
 
 type AnnotationDeps struct {
-	DB         *sql.DB
-	TxRepo     ports.TransactionRepository
-	TagRepo    ports.TagRepository
-	BucketRepo ports.BucketRepository
-	AuditRepo  ports.AuditLogRepository
-	BatchRepo  ports.ImportBatchRepository
-	OverlaySvc ports.OverlayService
-	Now        func() time.Time
+	DB          *sql.DB
+	TxRepo      ports.TransactionRepository
+	TagRepo     ports.TagRepository
+	BucketRepo  ports.BucketRepository
+	CategoryRepo ports.CategoryRepository
+	AuditRepo   ports.AuditLogRepository
+	BatchRepo   ports.ImportBatchRepository
+	OverlaySvc  ports.OverlayService
+	Now         func() time.Time
 }
 
 type AnnotationService struct {
@@ -43,15 +44,21 @@ func (s *AnnotationService) Categorize(ctx context.Context, txID int64, category
 	if err != nil {
 		return fmt.Errorf("load transaction: %w", err)
 	}
+	newCatID, err := s.resolveCategoryID(ctx, category)
+	if err != nil {
+		return err
+	}
 	bucket, err := s.resolveBucket(ctx, bucketName, string(old.Amount.Currency))
 	if err != nil {
 		return err
 	}
 
+	oldName := s.categoryNameOrEmpty(ctx, old.CategoryID)
+
 	return s.runTx(ctx, func(tx *sql.Tx) error {
 		now := s.deps.Now()
-		if old.Category != category {
-			if err := s.deps.TxRepo.SetCategoryDBTX(ctx, tx, txID, category); err != nil {
+		if !sameCategoryID(old.CategoryID, newCatID) {
+			if err := s.deps.TxRepo.SetCategoryDBTX(ctx, tx, txID, newCatID); err != nil {
 				return err
 			}
 			if _, err := s.deps.AuditRepo.AppendDBTX(ctx, tx, &entities.AuditEntry{
@@ -59,7 +66,7 @@ func (s *AnnotationService) Categorize(ctx context.Context, txID int64, category
 				RecordID:  txID,
 				Action:    entities.AuditActionCategorize,
 				Field:     strPtr("category"),
-				OldValue:  strPtr(old.Category),
+				OldValue:  strPtr(oldName),
 				NewValue:  strPtr(category),
 				CreatedAt: now,
 			}); err != nil {
@@ -82,7 +89,7 @@ func (s *AnnotationService) Categorize(ctx context.Context, txID int64, category
 				return err
 			}
 		}
-		if old.Category == category && (bucket == nil || sameBucketID(old.BucketID, &bucket.ID)) {
+		if sameCategoryID(old.CategoryID, newCatID) && (bucket == nil || sameBucketID(old.BucketID, &bucket.ID)) {
 			return nil
 		}
 		return s.deps.OverlaySvc.RebuildWithTx(ctx, tx)
@@ -268,14 +275,19 @@ func (s *AnnotationService) BulkCategorize(ctx context.Context, txIDs []int64, c
 		}
 		bucket = b
 	}
+	newCatID, err := s.resolveCategoryID(ctx, category)
+	if err != nil {
+		return err
+	}
 
 	return s.runTx(ctx, func(tx *sql.Tx) error {
 		wrote := false
 		now := s.deps.Now()
 		for _, id := range uniqueIDs {
 			old := oldByID[id]
-			if old.Category != category {
-				if err := s.deps.TxRepo.SetCategoryDBTX(ctx, tx, id, category); err != nil {
+			if !sameCategoryID(old.CategoryID, newCatID) {
+				oldName := s.categoryNameOrEmpty(ctx, old.CategoryID)
+				if err := s.deps.TxRepo.SetCategoryDBTX(ctx, tx, id, newCatID); err != nil {
 					return err
 				}
 				if _, err := s.deps.AuditRepo.AppendDBTX(ctx, tx, &entities.AuditEntry{
@@ -283,7 +295,7 @@ func (s *AnnotationService) BulkCategorize(ctx context.Context, txIDs []int64, c
 					RecordID:  id,
 					Action:    entities.AuditActionCategorize,
 					Field:     strPtr("category"),
-					OldValue:  strPtr(old.Category),
+					OldValue:  strPtr(oldName),
 					NewValue:  strPtr(category),
 					CreatedAt: now,
 				}); err != nil {
@@ -521,14 +533,18 @@ func (s *AnnotationService) Undo(ctx context.Context) error {
 					return fmt.Errorf("delete transaction %d: %w", entry.RecordID, err)
 				}
 
-			case entities.AuditActionCategorize:
-				category := "Unknown"
-				if entry.OldValue != nil {
-					category = *entry.OldValue
+		case entities.AuditActionCategorize:
+			var catID *int64
+			if entry.OldValue != nil && *entry.OldValue != "" {
+				c, err := s.deps.CategoryRepo.GetByName(ctx, *entry.OldValue)
+				if err != nil {
+					return fmt.Errorf("lookup category %q for undo: %w", *entry.OldValue, err)
 				}
-				if err := s.deps.TxRepo.SetCategoryDBTX(ctx, tx, entry.RecordID, category); err != nil {
-					return fmt.Errorf("restore category for txn %d: %w", entry.RecordID, err)
-				}
+				catID = &c.ID
+			}
+			if err := s.deps.TxRepo.SetCategoryDBTX(ctx, tx, entry.RecordID, catID); err != nil {
+				return fmt.Errorf("restore category for txn %d: %w", entry.RecordID, err)
+			}
 
 			case entities.AuditActionVisibility:
 				hidden := false
@@ -651,6 +667,35 @@ func sameBucketID(a, b *int64) bool {
 		return false
 	}
 	return *a == *b
+}
+
+func sameCategoryID(a, b *int64) bool {
+	return sameBucketID(a, b)
+}
+
+func (s *AnnotationService) resolveCategoryID(ctx context.Context, name string) (*int64, error) {
+	if name == "" {
+		return nil, nil
+	}
+	c, err := s.deps.CategoryRepo.GetByName(ctx, name)
+	if err != nil {
+		if errors.Is(err, ports.ErrNotFound) {
+			return nil, fmt.Errorf("category %q not found", name)
+		}
+		return nil, fmt.Errorf("lookup category: %w", err)
+	}
+	return &c.ID, nil
+}
+
+func (s *AnnotationService) categoryNameOrEmpty(ctx context.Context, id *int64) string {
+	if id == nil {
+		return ""
+	}
+	c, err := s.deps.CategoryRepo.GetByID(ctx, *id)
+	if err != nil {
+		return ""
+	}
+	return c.Name
 }
 
 func bucketIDToStringPtr(id *int64) *string {

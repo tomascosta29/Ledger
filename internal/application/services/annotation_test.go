@@ -15,16 +15,17 @@ import (
 )
 
 type annotationTestEnv struct {
-	db         *persistence.DB
-	annSvc     *services.AnnotationService
-	txRepo     *persistence.TransactionRepository
-	tagRepo    *persistence.TagRepository
-	bucketRepo *persistence.BucketRepository
-	auditRepo  *persistence.AuditLogRepository
-	batchRepo  *persistence.ImportBatchRepository
-	ovSvc      *services.OverlayService
-	ovRepo     *persistence.OverlayRepository
-	cleanup    func()
+	db           *persistence.DB
+	annSvc       *services.AnnotationService
+	txRepo       *persistence.TransactionRepository
+	tagRepo      *persistence.TagRepository
+	bucketRepo   *persistence.BucketRepository
+	categoryRepo *persistence.CategoryRepository
+	auditRepo    *persistence.AuditLogRepository
+	batchRepo    *persistence.ImportBatchRepository
+	ovSvc        *services.OverlayService
+	ovRepo       *persistence.OverlayRepository
+	cleanup      func()
 }
 
 func newAnnotationTestEnv(t *testing.T) *annotationTestEnv {
@@ -36,9 +37,13 @@ func newAnnotationTestEnv(t *testing.T) *annotationTestEnv {
 	if err := persistence.Migrate(db.DB); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
+	if _, err := db.Exec(`INSERT INTO categories (name) VALUES ('want')`); err != nil {
+		t.Fatalf("seed want: %v", err)
+	}
 	txRepo := persistence.NewTransactionRepository(db)
 	tagRepo := persistence.NewTagRepository(db)
 	bucketRepo := persistence.NewBucketRepository(db)
+	categoryRepo := persistence.NewCategoryRepository(db)
 	auditRepo := persistence.NewAuditLogRepository(db)
 	batchRepo := persistence.NewImportBatchRepository(db)
 	ovSvc := services.NewOverlayService(db.DB)
@@ -51,27 +56,53 @@ func newAnnotationTestEnv(t *testing.T) *annotationTestEnv {
 	}
 
 	annSvc := services.NewAnnotationService(services.AnnotationDeps{
-		DB:         db.DB,
-		TxRepo:     txRepo,
-		TagRepo:    tagRepo,
-		BucketRepo: bucketRepo,
-		AuditRepo:  auditRepo,
-		BatchRepo:  batchRepo,
-		OverlaySvc: ovSvc,
-		Now:        nowFunc,
+		DB:           db.DB,
+		TxRepo:       txRepo,
+		TagRepo:      tagRepo,
+		BucketRepo:   bucketRepo,
+		CategoryRepo: categoryRepo,
+		AuditRepo:    auditRepo,
+		BatchRepo:    batchRepo,
+		OverlaySvc:   ovSvc,
+		Now:          nowFunc,
 	})
 	return &annotationTestEnv{
-		db:         db,
-		annSvc:     annSvc,
-		txRepo:     txRepo,
-		tagRepo:    tagRepo,
-		bucketRepo: bucketRepo,
-		auditRepo:  auditRepo,
-		batchRepo:  batchRepo,
-		ovSvc:      ovSvc,
-		ovRepo:     ovRepo,
-		cleanup:    func() { _ = db.Close() },
+		db:           db,
+		annSvc:       annSvc,
+		txRepo:       txRepo,
+		tagRepo:      tagRepo,
+		bucketRepo:   bucketRepo,
+		categoryRepo: categoryRepo,
+		auditRepo:    auditRepo,
+		batchRepo:    batchRepo,
+		ovSvc:        ovSvc,
+		ovRepo:       ovRepo,
+		cleanup:      func() { _ = db.Close() },
 	}
+}
+
+func (e *annotationTestEnv) seedCategory(t *testing.T, name string) int64 {
+	t.Helper()
+	if _, err := e.db.Exec(`INSERT INTO categories (name) VALUES (?)`, name); err != nil {
+		t.Fatalf("seed category %q: %v", name, err)
+	}
+	var id int64
+	if err := e.db.QueryRow(`SELECT id FROM categories WHERE name = ?`, name).Scan(&id); err != nil {
+		t.Fatalf("lookup seeded category %q: %v", name, err)
+	}
+	return id
+}
+
+func (e *annotationTestEnv) categoryName(t *testing.T, id *int64) string {
+	t.Helper()
+	if id == nil {
+		return ""
+	}
+	c, err := e.categoryRepo.GetByID(context.Background(), *id)
+	if err != nil {
+		t.Fatalf("category lookup: %v", err)
+	}
+	return c.Name
 }
 
 func (e *annotationTestEnv) seedTx(t *testing.T) int64 {
@@ -81,7 +112,6 @@ func (e *annotationTestEnv) seedTx(t *testing.T) int64 {
 		Amount:        valueobjects.MustNew(-1000, valueobjects.EUR),
 		Description:   "test",
 		SourceHash:    "h",
-		Category:      "Unknown",
 		CreatedAt:     time.Now().UTC(),
 		UpdatedAt:     time.Now().UTC(),
 	})
@@ -107,8 +137,8 @@ func TestAnnotateCategorizeWritesAndRebuilds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if got.Category != "want" {
-		t.Fatalf("category = %q, want want", got.Category)
+	if env.categoryName(t, got.CategoryID) != "want" {
+		t.Fatalf("category = %q, want want", env.categoryName(t, got.CategoryID))
 	}
 
 	rows, err := env.ovRepo.FindAll(context.Background(), ports.OverlayFindOptions{})
@@ -270,8 +300,8 @@ func TestUndo(t *testing.T) {
 		if err != nil {
 			t.Fatalf("get: %v", err)
 		}
-		if txn.Category != "Unknown" {
-			t.Fatalf("expected category to revert to 'Unknown', got %q", txn.Category)
+		if txn.CategoryID != nil {
+			t.Fatalf("expected category to revert to uncategorized, got id %v", *txn.CategoryID)
 		}
 
 		// Check overlay is also updated
@@ -279,7 +309,7 @@ func TestUndo(t *testing.T) {
 		if err != nil {
 			t.Fatalf("overlay find: %v", err)
 		}
-		if len(rows) != 1 || rows[0].Category != "Unknown" {
+		if len(rows) != 1 || rows[0].Category != "" {
 			t.Fatalf("overlay category not updated after undo: %+v", rows)
 		}
 	})
@@ -365,8 +395,8 @@ func TestUndo(t *testing.T) {
 
 		// Check initial state
 		txn, _ := env.txRepo.GetByID(context.Background(), id)
-		if txn.Category != "want" || !txn.IsHidden {
-			t.Fatalf("unexpected state: category=%s, hidden=%t", txn.Category, txn.IsHidden)
+		if env.categoryName(t, txn.CategoryID) != "want" || !txn.IsHidden {
+			t.Fatalf("unexpected state: category=%s, hidden=%t", env.categoryName(t, txn.CategoryID), txn.IsHidden)
 		}
 
 		// Undo hide
@@ -374,8 +404,8 @@ func TestUndo(t *testing.T) {
 			t.Fatalf("undo hide: %v", err)
 		}
 		txn, _ = env.txRepo.GetByID(context.Background(), id)
-		if txn.Category != "want" || txn.IsHidden {
-			t.Fatalf("after undo hide: category=%s, hidden=%t", txn.Category, txn.IsHidden)
+		if env.categoryName(t, txn.CategoryID) != "want" || txn.IsHidden {
+			t.Fatalf("after undo hide: category=%s, hidden=%t", env.categoryName(t, txn.CategoryID), txn.IsHidden)
 		}
 
 		// Undo categorize
@@ -383,8 +413,8 @@ func TestUndo(t *testing.T) {
 			t.Fatalf("undo categorize: %v", err)
 		}
 		txn, _ = env.txRepo.GetByID(context.Background(), id)
-		if txn.Category != "Unknown" || txn.IsHidden {
-			t.Fatalf("after undo categorize: category=%s, hidden=%t", txn.Category, txn.IsHidden)
+		if txn.CategoryID != nil || txn.IsHidden {
+			t.Fatalf("after undo categorize: category=%s, hidden=%t", env.categoryName(t, txn.CategoryID), txn.IsHidden)
 		}
 	})
 
@@ -420,7 +450,6 @@ func TestUndo(t *testing.T) {
 			Description:   "tx 1",
 			ImportBatchID: &batchID,
 			SourceHash:    "h1",
-			Category:      "Unknown",
 		}
 		tx2 := &entities.Transaction{
 			EffectiveDate: "2026-06-20",
@@ -428,7 +457,6 @@ func TestUndo(t *testing.T) {
 			Description:   "tx 2",
 			ImportBatchID: &batchID,
 			SourceHash:    "h2",
-			Category:      "Unknown",
 		}
 
 		ids, err := env.txRepo.InsertBatch(context.Background(), []*entities.Transaction{tx1, tx2})
@@ -509,8 +537,8 @@ func TestBulkCategorize(t *testing.T) {
 
 		for _, id := range []int64{id1, id2, id3} {
 			txn, _ := env.txRepo.GetByID(context.Background(), id)
-			if txn.Category != "want" {
-				t.Fatalf("txn %d category = %q, want %q", id, txn.Category, "want")
+			if env.categoryName(t, txn.CategoryID) != "want" {
+				t.Fatalf("txn %d category = %q, want %q", id, env.categoryName(t, txn.CategoryID), "want")
 			}
 		}
 
@@ -543,13 +571,20 @@ func TestBulkCategorize(t *testing.T) {
 		defer env.cleanup()
 		id1 := env.seedTx(t)
 		id2 := env.seedTx(t)
-		// id1 already "Unknown"; bulk-categorizing to "Unknown" is a no-op for it.
-		if err := env.annSvc.BulkCategorize(context.Background(), []int64{id1, id2, id1}, "Unknown", nil); err != nil {
+		// Seed id1 and id2 with category "want" so the bulk-categorize is a no-op.
+		if err := env.annSvc.Categorize(context.Background(), id1, "want", nil); err != nil {
+			t.Fatalf("seed id1 categorize: %v", err)
+		}
+		if err := env.annSvc.Categorize(context.Background(), id2, "want", nil); err != nil {
+			t.Fatalf("seed id2 categorize: %v", err)
+		}
+		before, _ := env.auditRepo.Query(context.Background(), ports.AuditEntryFilter{Action: strPtr("categorize")})
+		if err := env.annSvc.BulkCategorize(context.Background(), []int64{id1, id2, id1}, "want", nil); err != nil {
 			t.Fatalf("bulk categorize: %v", err)
 		}
-		entries, _ := env.auditRepo.Query(context.Background(), ports.AuditEntryFilter{Action: strPtr("categorize")})
-		if len(entries) != 0 {
-			t.Fatalf("expected 0 audit rows for all no-ops, got %d", len(entries))
+		after, _ := env.auditRepo.Query(context.Background(), ports.AuditEntryFilter{Action: strPtr("categorize")})
+		if len(after) != len(before) {
+			t.Fatalf("expected no new audit rows, got %d -> %d", len(before), len(after))
 		}
 	})
 
@@ -571,8 +606,8 @@ func TestBulkCategorize(t *testing.T) {
 			t.Fatal("expected error from missing id")
 		}
 		txn, _ := env.txRepo.GetByID(context.Background(), id1)
-		if txn.Category != "Unknown" {
-			t.Fatalf("expected id1 unchanged after rollback, got category %q", txn.Category)
+		if txn.CategoryID != nil {
+			t.Fatalf("expected id1 unchanged after rollback, got category %q", env.categoryName(t, txn.CategoryID))
 		}
 		entries, _ := env.auditRepo.Query(context.Background(), ports.AuditEntryFilter{Action: strPtr("categorize")})
 		if len(entries) != 0 {
@@ -707,8 +742,8 @@ func TestUndoBulkCategorize(t *testing.T) {
 	}
 	for _, id := range []int64{id1, id2, id3} {
 		txn, _ := env.txRepo.GetByID(context.Background(), id)
-		if txn.Category != "Unknown" {
-			t.Fatalf("txn %d category after undo = %q, want Unknown", id, txn.Category)
+		if txn.CategoryID != nil {
+			t.Fatalf("txn %d category after undo = %q, want uncategorized", id, env.categoryName(t, txn.CategoryID))
 		}
 	}
 }
@@ -729,8 +764,8 @@ func TestCategorizeWithBucket(t *testing.T) {
 			t.Fatalf("categorize: %v", err)
 		}
 		txn, _ := env.txRepo.GetByID(context.Background(), id)
-		if txn.Category != "want" {
-			t.Fatalf("category = %q, want want", txn.Category)
+		if env.categoryName(t, txn.CategoryID) != "want" {
+			t.Fatalf("category = %q, want want", env.categoryName(t, txn.CategoryID))
 		}
 		if txn.BucketID == nil || *txn.BucketID != bid {
 			t.Fatalf("bucket = %v, want %d", txn.BucketID, bid)
@@ -763,8 +798,8 @@ func TestCategorizeWithBucket(t *testing.T) {
 			t.Fatal("expected error for missing bucket")
 		}
 		txn, _ := env.txRepo.GetByID(context.Background(), id)
-		if txn.Category != "Unknown" {
-			t.Fatalf("category changed despite failure: %q", txn.Category)
+		if txn.CategoryID != nil {
+			t.Fatalf("category changed despite failure: %q", env.categoryName(t, txn.CategoryID))
 		}
 	})
 
@@ -810,8 +845,8 @@ func TestCategorizeWithBucket(t *testing.T) {
 		if txn.BucketID == nil || *txn.BucketID != originalID {
 			t.Fatalf("bucket after undo = %v, want %d", txn.BucketID, originalID)
 		}
-		if txn.Category != "Unknown" {
-			t.Fatalf("category after undo = %q, want Unknown", txn.Category)
+		if txn.CategoryID != nil {
+			t.Fatalf("category after undo = %q, want uncategorized", env.categoryName(t, txn.CategoryID))
 		}
 	})
 }

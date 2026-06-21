@@ -29,6 +29,30 @@ func newTestDB(t *testing.T) *persistence.DB {
 	return db
 }
 
+func seedCategory(t *testing.T, db *persistence.DB, name string) int64 {
+	t.Helper()
+	if _, err := db.Exec(`INSERT INTO categories (name) VALUES (?)`, name); err != nil {
+		t.Fatalf("seed category %q: %v", name, err)
+	}
+	var id int64
+	if err := db.QueryRow(`SELECT id FROM categories WHERE name = ?`, name).Scan(&id); err != nil {
+		t.Fatalf("lookup seeded category %q: %v", name, err)
+	}
+	return id
+}
+
+func categoryName(t *testing.T, db *persistence.DB, id *int64) string {
+	t.Helper()
+	if id == nil {
+		return ""
+	}
+	c, err := persistence.NewCategoryRepository(db).GetByID(context.Background(), *id)
+	if err != nil {
+		t.Fatalf("category lookup: %v", err)
+	}
+	return c.Name
+}
+
 func TestOpenAndMigrate(t *testing.T) {
 	db := newTestDB(t)
 
@@ -57,7 +81,6 @@ func TestTransactionRoundTrip(t *testing.T) {
 		Description:   desc,
 		PartnerName:   &partner,
 		SourceHash:    "abc123",
-		Category:      "Unknown",
 		CreatedAt:     now,
 		UpdatedAt:     now,
 	}
@@ -83,8 +106,8 @@ func TestTransactionRoundTrip(t *testing.T) {
 	if got.PartnerName == nil || *got.PartnerName != partner {
 		t.Fatalf("partner mismatch: %+v", got.PartnerName)
 	}
-	if got.Category != "Unknown" {
-		t.Fatalf("category default wrong: %q", got.Category)
+	if got.CategoryID != nil {
+		t.Fatalf("category default should be uncategorized, got id %v", *got.CategoryID)
 	}
 	if got.IsHidden || got.ExcludeFromReports {
 		t.Fatalf("defaults wrong: hidden=%v exclude=%v", got.IsHidden, got.ExcludeFromReports)
@@ -207,11 +230,11 @@ func TestUpdateFields(t *testing.T) {
 	repo := persistence.NewTransactionRepository(db)
 	now := time.Now().UTC()
 
+	wantID := seedCategory(t, db, "want")
 	id, err := repo.Insert(ctx, &entities.Transaction{
 		EffectiveDate: "2026-06-15",
 		Amount:        valueobjects.MustNew(-100, valueobjects.EUR),
 		SourceHash:    "h",
-		Category:      "Unknown",
 		CreatedAt:     now,
 		UpdatedAt:     now,
 	})
@@ -222,7 +245,7 @@ func TestUpdateFields(t *testing.T) {
 	if err := repo.SetHidden(ctx, id, true); err != nil {
 		t.Fatalf("set hidden: %v", err)
 	}
-	if err := repo.SetCategory(ctx, id, "want"); err != nil {
+	if err := repo.SetCategory(ctx, id, &wantID); err != nil {
 		t.Fatalf("set category: %v", err)
 	}
 	if err := repo.SetExcludeFromReports(ctx, id, true); err != nil {
@@ -239,8 +262,8 @@ func TestUpdateFields(t *testing.T) {
 	if !got.ExcludeFromReports {
 		t.Fatal("expected exclude_from_reports=true")
 	}
-	if got.Category != "want" {
-		t.Fatalf("category wrong: %q", got.Category)
+	if categoryName(t, db, got.CategoryID) != "want" {
+		t.Fatalf("category wrong: %v", got.CategoryID)
 	}
 }
 
@@ -427,7 +450,6 @@ func TestBucketDeleteBlockedByAssignment(t *testing.T) {
 		Amount:        valueobjects.MustNew(-150000, valueobjects.EUR),
 		Description:   "rent",
 		SourceHash:    "h",
-		Category:      "Unknown",
 		CreatedAt:     time.Now().UTC(),
 		UpdatedAt:     time.Now().UTC(),
 	})
@@ -462,7 +484,6 @@ func TestBucketSpendByMonth(t *testing.T) {
 			Amount:        valueobjects.MustNew(amount, valueobjects.EUR),
 			Description:   fmt.Sprintf("tx %d", i),
 			SourceHash:    fmt.Sprintf("h%d", i),
-			Category:      "Unknown",
 			CreatedAt:     time.Now().UTC(),
 			UpdatedAt:     time.Now().UTC(),
 		})

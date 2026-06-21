@@ -42,6 +42,8 @@ func NewLinker() *Linker { return &Linker{} }
 
 func (l *Linker) Title() string { return "Linker" }
 
+func (l *Linker) StatusMsg() string { return l.statusMsg }
+
 func (l *Linker) Init(ctx context.Context, deps Deps) tea.Cmd {
 	l.deps = deps
 	l.reload(ctx)
@@ -228,6 +230,8 @@ func NewBudget() *Budget { return &Budget{} }
 
 func (b *Budget) Title() string { return "Budget" }
 
+func (b *Budget) StatusMsg() string { return b.statusMsg }
+
 func (b *Budget) Init(ctx context.Context, deps Deps) tea.Cmd {
 	b.deps = deps
 	b.month = time.Now().UTC().Format("2006-01")
@@ -401,6 +405,8 @@ type recipeRow struct {
 func NewRecipes() *Recipes { return &Recipes{} }
 
 func (r *Recipes) Title() string { return "Recipes" }
+
+func (r *Recipes) StatusMsg() string { return r.statusMsg }
 
 func (r *Recipes) Init(ctx context.Context, deps Deps) tea.Cmd {
 	r.deps = deps

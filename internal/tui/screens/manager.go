@@ -89,6 +89,8 @@ func NewManager() *Manager {
 
 func (m *Manager) Title() string { return "Manager" }
 
+func (m *Manager) StatusMsg() string { return m.statusMsg }
+
 func (m *Manager) Init(ctx context.Context, deps Deps) tea.Cmd {
 	m.deps = deps
 	m.reload(ctx)
@@ -309,7 +311,12 @@ func (m *Manager) applyInput(ctx context.Context, mode inputKind, scope inputSco
 			m.statusMsg = "no row"
 			return m, nil
 		}
-		ids = []int64{m.rows[m.cursor].id}
+		row := m.rows[m.cursor]
+		if row.rawID == nil {
+			m.statusMsg = "cannot annotate group row directly"
+			return m, nil
+		}
+		ids = []int64{*row.rawID}
 	case scopeSelection:
 		ids = m.selectedIDs()
 		if len(ids) == 0 {
@@ -331,6 +338,7 @@ func (m *Manager) applyInput(ctx context.Context, mode inputKind, scope inputSco
 		m.statusMsg = mode.label() + ": " + err.Error()
 		return m, nil
 	}
+	m.reload(ctx)
 	switch scope {
 	case scopeCursor:
 		m.statusMsg = fmt.Sprintf("%s %d → %s", mode.label(), ids[0], value)
@@ -338,14 +346,15 @@ func (m *Manager) applyInput(ctx context.Context, mode inputKind, scope inputSco
 		m.statusMsg = fmt.Sprintf("%s %d → %s", mode.label(), len(ids), value)
 		m.selected = make(map[int64]bool)
 	}
-	m.reload(ctx)
 	return m, nil
 }
 
 func (m *Manager) selectedIDs() []int64 {
-	ids := make([]int64, 0, len(m.selected))
-	for id := range m.selected {
-		ids = append(ids, id)
+	var ids []int64
+	for _, r := range m.rows {
+		if m.selected[r.id] && r.rawID != nil {
+			ids = append(ids, *r.rawID)
+		}
 	}
 	return ids
 }
@@ -361,9 +370,9 @@ func (m *Manager) applyBulkHide(ctx context.Context) {
 		m.statusMsg = "hide: " + err.Error()
 		return
 	}
-	m.statusMsg = fmt.Sprintf("hidden %d", len(ids))
 	m.selected = make(map[int64]bool)
 	m.reload(ctx)
+	m.statusMsg = fmt.Sprintf("hidden %d", len(ids))
 }
 
 // linkSelected is the entry point for the `l` key. Behavior splits

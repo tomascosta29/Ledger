@@ -151,11 +151,16 @@ func (a *App) View() string {
 
 	body := a.current.View(contentW, contentH)
 	hints := a.current.Hints(a.width)
+	statusMsg := a.statusMsg
+	if statusMsg == "" {
+		statusMsg = a.current.StatusMsg()
+	}
+
 	status := components.Status{
 		DBPath:    a.deps.DBPath,
 		Screen:    a.current.Title(),
 		Mode:      modeLabel(a.mode),
-		StatusMsg: a.statusMsg,
+		StatusMsg: statusMsg,
 		Width:     a.width,
 	}
 

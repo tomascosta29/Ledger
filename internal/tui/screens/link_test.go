@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -202,3 +203,53 @@ func TestLinkManual_SameSignUsesDateTiebreak(t *testing.T) {
 		t.Fatalf("want 1 group, got %d", len(groups))
 	}
 }
+
+// TestLinkManual_IdMismatch verifies that manual linking works even when
+// overlay IDs and raw transaction IDs are mismatched (e.g. after overlay rebuilds).
+func TestLinkManual_IdMismatch(t *testing.T) {
+	f := newLinkTestFixture(t, linkErsteCSV)
+
+	ctx := context.Background()
+	m := NewManager()
+	if err := m.Init(ctx, f.deps); err != nil {
+		t.Fatalf("manager init: %v", err)
+	}
+
+	// Trigger a rebuild of the overlay. Because DELETE is used, the auto-increment
+	// counter is NOT reset, so the next insertion starts after the deleted rows.
+	// This creates an ID mismatch: raw IDs are 1 and 2, but overlay IDs are now 3 and 4.
+	if err := f.deps.OverlaySvc.Rebuild(ctx); err != nil {
+		t.Fatalf("rebuild overlay: %v", err)
+	}
+
+	// Re-initialize/reload the manager so it fetches the new overlay IDs.
+	if err := m.Init(ctx, f.deps); err != nil {
+		t.Fatalf("manager re-init: %v", err)
+	}
+
+	if len(m.rows) != 2 {
+		t.Fatalf("want 2 rows, got %d", len(m.rows))
+	}
+
+	// Select the mismatching overlay row IDs (3 and 4)
+	for i := range m.rows {
+		m.selected[m.rows[i].id] = true
+	}
+
+	// Run manual link
+	m.linkSelected(ctx)
+
+	// Verify that the link succeeded and the group was created
+	if m.statusMsg == "" || strings.HasPrefix(m.statusMsg, "link load") || strings.HasPrefix(m.statusMsg, "link:") {
+		t.Fatalf("link failed with ID mismatch: statusMsg=%q", m.statusMsg)
+	}
+
+	groups, err := f.groupRepo.ListGroups(ctx)
+	if err != nil {
+		t.Fatalf("list groups: %v", err)
+	}
+	if len(groups) != 1 {
+		t.Fatalf("want 1 group, got %d", len(groups))
+	}
+}
+

@@ -25,6 +25,7 @@ type Screen interface {
 	Update(msg tea.Msg) (Screen, tea.Cmd)
 	View(width, height int) string
 	Hints(width int) hints.FooterHints
+	StatusMsg() string
 }
 
 // Deps carries the things every screen needs (DB path, repositories,

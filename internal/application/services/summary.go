@@ -68,7 +68,7 @@ func (s *SummaryService) Run(ctx context.Context, recipeName, month string) (*Su
 
 	opts := ports.OverlayFindOptions{
 		Filters: ports.OverlayFilters{
-			SourceKinds: []ports.SourceKind{ports.SourceRaw, ports.SourceSplitHeader, ports.SourceSplitChild},
+			SourceKinds: []ports.SourceKind{ports.SourceRaw, ports.SourceSplitHeader, ports.SourceSplitChild, ports.SourceGroup},
 			StartDate:   &start,
 			EndDate:     &end,
 		},
@@ -148,6 +148,8 @@ func (s *SummaryService) matchClause(r *ports.OverlayTransaction, c entities.Cla
 			}
 		}
 		return false
+	case "source_kind":
+		return matchString(string(r.SourceKind), op, c.Value)
 	}
 	return false
 }

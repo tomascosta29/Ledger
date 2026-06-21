@@ -11,11 +11,10 @@ import (
 type SourceKind string
 
 const (
-	SourceRaw                SourceKind = "raw"
-	SourceSplitChild         SourceKind = "split_child"
-	SourceSplitHeader        SourceKind = "split_header"
-	SourceTransferGroup      SourceKind = "transfer_group"
-	SourceReimbursementGroup SourceKind = "reimbursement_group"
+	SourceRaw         SourceKind = "raw"
+	SourceSplitChild  SourceKind = "split_child"
+	SourceSplitHeader SourceKind = "split_header"
+	SourceGroup       SourceKind = "group"
 )
 
 type OverlayFilters struct {

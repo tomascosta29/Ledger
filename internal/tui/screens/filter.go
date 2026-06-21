@@ -104,7 +104,7 @@ func (f Filter) Apply() ports.OverlayFilters {
 			ports.SourceRaw,
 			ports.SourceSplitHeader,
 			ports.SourceSplitChild,
-			ports.SourceReimbursementGroup,
+			ports.SourceGroup,
 		},
 	}
 	if f.DescriptionLike != nil {

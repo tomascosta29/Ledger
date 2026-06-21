@@ -1159,7 +1159,7 @@ func runList(cmd *cobra.Command, args []string) error {
 
 	repo := persistence.NewOverlayRepository(db)
 	filters := ports.OverlayFilters{
-		SourceKinds: []ports.SourceKind{ports.SourceRaw, ports.SourceSplitHeader, ports.SourceSplitChild, ports.SourceReimbursementGroup},
+		SourceKinds: []ports.SourceKind{ports.SourceRaw, ports.SourceSplitHeader, ports.SourceSplitChild, ports.SourceGroup},
 	}
 	if listCategory != "" {
 		filters.Category = &listCategory

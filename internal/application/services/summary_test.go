@@ -118,7 +118,11 @@ func writeRecipe(dir, name string, r entities.Recipe) error {
 	for _, c := range r.Include {
 		body += "  { field = \"" + c.Field + "\", op = \"" + c.Op + "\", value = \"" + c.Value + "\" },\n"
 	}
-	body += "]\nexclude = []\nnet = false\n"
+	body += "]\nexclude = [\n"
+	for _, c := range r.Exclude {
+		body += "  { field = \"" + c.Field + "\", op = \"" + c.Op + "\", value = \"" + c.Value + "\" },\n"
+	}
+	body += "]\nnet = false\n"
 	return writeFile(filepath.Join(dir, name+".toml"), body)
 }
 
@@ -172,6 +176,97 @@ func TestSummaryActiveRecipeFallback(t *testing.T) {
 	}
 	if len(result.Lines) != 1 || result.Lines[0].Count != 1 {
 		t.Fatalf("expected 1 tx in 2026-07 matching essentials, got %+v", result.Lines)
+	}
+}
+
+func TestSummaryExcludeGroup(t *testing.T) {
+	svc, db, cleanup := newSummaryTestEnv(t)
+	defer cleanup()
+
+	// Build a reimbursement pair in June 2026 so the underlying txs
+	// exist as a group row in the overlay (and not as raw rows, since
+	// group members are excluded from raw by the rebuild).
+	recipesDir := os.Getenv("LEDGER_RECIPES_DIR")
+	if recipesDir == "" {
+		t.Fatal("LEDGER_RECIPES_DIR not set")
+	}
+	wantCat, _ := persistence.NewCategoryRepository(db).GetByName(context.Background(), "want")
+	id1, _ := persistence.NewTransactionRepository(db).Insert(context.Background(), &entities.Transaction{
+		EffectiveDate: "2026-06-10",
+		Amount:        valueobjects.MustNew(-1000, valueobjects.EUR),
+		Description:   "dinner",
+		SourceHash:    "g1",
+		CategoryID:    &wantCat.ID,
+		CreatedAt:     time.Now().UTC(),
+		UpdatedAt:     time.Now().UTC(),
+	})
+	id2, _ := persistence.NewTransactionRepository(db).Insert(context.Background(), &entities.Transaction{
+		EffectiveDate: "2026-06-11",
+		Amount:        valueobjects.MustNew(1000, valueobjects.EUR),
+		Description:   "alex paid back",
+		SourceHash:    "g2",
+		CategoryID:    &wantCat.ID,
+		CreatedAt:     time.Now().UTC(),
+		UpdatedAt:     time.Now().UTC(),
+	})
+	groupRepo := persistence.NewGroupRepository(db)
+	groupID, err := groupRepo.CreateGroup(context.Background(), &entities.TransactionGroup{})
+	if err != nil {
+		t.Fatalf("create group: %v", err)
+	}
+	if err := groupRepo.AddMember(context.Background(), groupID, id1, "expense"); err != nil {
+		t.Fatalf("add member 1: %v", err)
+	}
+	if err := groupRepo.AddMember(context.Background(), groupID, id2, "reimbursement"); err != nil {
+		t.Fatalf("add member 2: %v", err)
+	}
+	if err := services.NewOverlayService(db.DB).Rebuild(context.Background()); err != nil {
+		t.Fatalf("rebuild: %v", err)
+	}
+
+	// Sanity: confirm the group row landed in the overlay.
+	var groupCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM overlay_transactions WHERE source_kind = 'group'`).Scan(&groupCount); err != nil {
+		t.Fatalf("count groups: %v", err)
+	}
+	if groupCount != 1 {
+		t.Fatalf("expected 1 group row in overlay, got %d", groupCount)
+	}
+
+	// Recipe A: empty clauses match everything, so all June 2026 rows
+	// including the group row count.
+	if err := writeRecipe(recipesDir, "all", entities.Recipe{
+		Name: "all",
+	}); err != nil {
+		t.Fatalf("write recipe: %v", err)
+	}
+	all, err := svc.Run(context.Background(), "all", "2026-06")
+	if err != nil {
+		t.Fatalf("run all: %v", err)
+	}
+	if len(all.Lines) != 1 {
+		t.Fatalf("expected 1 currency line, got %d", len(all.Lines))
+	}
+	totalWithGroup := all.Lines[0].Count
+
+	// Recipe B: same everything but exclude source_kind=group. The
+	// group row is dropped from the count.
+	if err := writeRecipe(recipesDir, "no-group", entities.Recipe{
+		Name:    "no-group",
+		Exclude: []entities.Clause{{Field: "source_kind", Op: "is", Value: "group"}},
+	}); err != nil {
+		t.Fatalf("write recipe: %v", err)
+	}
+	without, err := svc.Run(context.Background(), "no-group", "2026-06")
+	if err != nil {
+		t.Fatalf("run no-group: %v", err)
+	}
+	if len(without.Lines) != 1 {
+		t.Fatalf("expected 1 currency line, got %d", len(without.Lines))
+	}
+	if without.Lines[0].Count != totalWithGroup-1 {
+		t.Fatalf("no-group count = %d, want %d (one less than with-group)",
+			without.Lines[0].Count, totalWithGroup-1)
 	}
 }
 

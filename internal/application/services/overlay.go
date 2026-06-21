@@ -234,7 +234,7 @@ func (s *OverlayService) insertGroupRows(ctx context.Context, tx *sql.Tx, refres
 			'',
 			g.id,
 			'',
-			'reimbursement_group',
+			'group',
 			GROUP_CONCAT(t.id),
 			0,
 			?

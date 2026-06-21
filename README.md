@@ -54,20 +54,24 @@ export LEDGER_DB_PATH=/tmp/ledger.db
 ./ledger tui
 ```
 
-## Status (early v1)
+## Status (v1 shipped)
 
-- ✓ Persistence layer (SQLite + goose migrations)
+All 18 v1 features are done and in `main`. See [ROADMAP.md](./ROADMAP.md)
+for the full shipped list and [SPEC.md](./SPEC.md) §4 for the v1 contract.
+
+- ✓ Persistence (SQLite + goose migrations)
 - ✓ CSV import (Erste + Revolut + custom TOML profiles)
 - ✓ Overlay (materialized read model, atomic rebuild on every annotation write)
-- ✓ Annotation primitives: categorize / hide / tag (CLI)
-- ✓ Audit trail (every annotation writes a row)
-- ⏳ Undo
-- ⏳ Buckets + Budget
-- ⏳ TUI shell + 5 screens
-- ⏳ Rules engine
-- ⏳ Splits + transfers + reimbursement linker
+- ✓ Annotation primitives: categorize / hide / tag / bulk + split + rules
+- ✓ Audit trail + undo (reverse-last-batch, atomic)
+- ✓ Buckets + budget
+- ✓ TUI shell + 5 screens (Manager, Categorizer, Linker, Budget, Recipes)
+- ✓ Splits + transfers + reimbursement linker
+- ✓ Summary recipes (TOML, include/exclude/net) + summary command
 
-See [ROADMAP.md](./ROADMAP.md) for the full picture.
+🔮 v2 (after v1 is in real use): recurring detection, bills, explain,
+doctor, wizard/shell/convert/export, recipe amortize, TUI command line,
+privacy mode, first-class account, FX, config file.
 
 ## Tests
 

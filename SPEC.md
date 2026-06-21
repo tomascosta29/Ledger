@@ -116,11 +116,7 @@ ledger tui                           # placeholder; full TUI ⏳
 
 ### ⏳ Next
 
-```
-ledger rule list|create|apply        # rules engine
-ledger recipe list|show|use          # summary recipes (CLI done; TUI ✓)
-ledger summary [--recipe R] [--month YYYY-MM]  # done
-```
+_None — all v1 subcommands are shipped. See [ROADMAP.md](./ROADMAP.md)._
 
 ## 6. Domain vocabulary
 

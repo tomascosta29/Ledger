@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -25,6 +26,20 @@ import (
 
 var version = "0.0.0"
 
+// resolveVersion picks up the actual build version when the binary is
+// built with VCS info (the default for `go install <module>@<tag>` and
+// `go build` inside a git repo), and falls back to the compile-time
+// `version` var when goreleaser injects one via -ldflags.
+func resolveVersion() string {
+	if info, ok := debug.ReadBuildInfo(); ok {
+		v := info.Main.Version
+		if v != "" && v != "(devel)" {
+			return v
+		}
+	}
+	return version
+}
+
 func main() {
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -39,7 +54,7 @@ var rootCmd = &cobra.Command{
 
 Primary surface is the Bubble Tea TUI (run with ` + "`ledger tui`" + `).
 Use the subcommands below for ops and scripting. See SPEC.md for the v1 plan.`,
-	Version:       version,
+	Version:       resolveVersion(),
 	SilenceUsage:  true,
 	SilenceErrors: true,
 }
